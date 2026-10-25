@@ -1,0 +1,1805 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Circuit Visualizer</title>
+  <style>
+    /* Dark theme: palette "Midnight x Electric Lime": background #0B0F19, cards #171F2E,
+       accent #C6FF4D, text #F4F7FB. Every other colour here is a tint or shade of those four.
+       (Variable names are kept from earlier versions so the drawing code keeps working.) */
+    :root {
+      color-scheme: dark;
+      --bg-warm: #0B0F19;          /* page background */
+      --bg-card: #171F2E;          /* cards */
+      --panel-sky: #1F293B;        /* tinted panels, table headers, gate fill */
+      --sky-blue: #2A3550;         /* hover and buttons */
+      --sky-blue-deep: #8A97B3;    /* chrome: gate outlines, badges, secondary strokes */
+      --border-sky: #2A3447;       /* borders */
+      --text-navy: #F4F7FB;        /* main text */
+      --text-muted: #9AA6BD;       /* secondary text */
+      --logic-high: #C6FF4D;       /* logic 1 / accent */
+      --accent-text: #C6FF4D;
+      --logic-high-glow: rgba(198, 255, 77, 0.45);
+      --logic-high-tint: #222E14;
+      --logic-low: #5A667D;        /* logic 0 */
+      --success-green: #C6FF4D;
+      --success-bg: #1E2A12;
+      --surface-soft: #121826;
+      --accent-red: #C6FF4D;       /* primary button */
+      --accent-red-dark: #AEE03A;
+      --sage: #9BD12E;
+      --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-mono: "SF Mono", "JetBrains Mono", Consolas, Menlo, monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    [hidden] { display: none !important; }
+
+    html, body { height: 100%; }
+    body {
+      font-family: var(--font-sans);
+      background-color: var(--bg-warm);
+      color: var(--text-navy);
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+    }
+
+    /* ---------- header ---------- */
+    header {
+      background: var(--bg-card);
+      border-bottom: 2px solid var(--sky-blue-deep);
+      padding: 8px 16px;
+      flex: none;
+    }
+    .header-content {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px;
+    }
+    h1.app-title { font-size: 1.2rem; font-weight: 800; letter-spacing: -0.02em; white-space: nowrap; }
+    .header-score {
+      font-family: var(--font-mono); font-size: 0.78rem; font-weight: 800;
+      background: var(--panel-sky); border: 1px solid var(--border-sky);
+      border-radius: 999px; padding: 5px 12px; white-space: nowrap; order: 3; margin-left: auto;
+    }
+    .header-score b { color: var(--accent-text); }
+    nav.circuit-tabs { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: thin; order: 2; max-width: 100%; }
+    .tab-btn {
+      background: var(--panel-sky); border: 1px solid var(--border-sky); border-radius: 8px;
+      padding: 6px 12px; font-size: 0.82rem; font-weight: 700; color: var(--text-navy);
+      cursor: pointer; white-space: nowrap; transition: background .15s ease;
+    }
+    .tab-btn:hover { background: var(--sky-blue); }
+    .tab-btn:focus-visible, .seg-btn:focus-visible, .bit-toggle:focus-visible, button:focus-visible { outline: 3px solid var(--logic-high); outline-offset: 2px; }
+    .tab-btn.active { background: var(--logic-high); color: #0B0F19; border-color: var(--logic-high); box-shadow: 0 2px 10px rgba(198, 255, 77, 0.25); }
+
+    /* ---------- page frame ---------- */
+    main { flex: 1; min-height: 0; width: 100%; padding: 12px 14px; }
+    .circuit-panel { display: none; gap: 12px; }
+    .circuit-panel.active { display: grid; grid-template-columns: 1fr; }
+    .col { display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 0; }
+
+    .card {
+      background: var(--bg-card); border: 1px solid var(--border-sky); border-radius: 12px;
+      padding: 10px 12px; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+      display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0;
+    }
+    .card-header {
+      display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px 10px;
+      border-bottom: 1px solid var(--border-sky); padding-bottom: 6px; flex: none;
+    }
+    .card-title { font-size: 0.82rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; }
+    .ic-badge {
+      font-family: var(--font-mono); font-size: 0.74rem; font-weight: 800; color: #0B0F19;
+      background: var(--sky-blue-deep); border-radius: 6px; padding: 3px 8px; white-space: nowrap;
+    }
+    .legend { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 0.72rem; font-weight: 700; color: var(--text-muted); }
+    .legend i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+    .legend i.hi { background: var(--logic-high); box-shadow: 0 0 6px var(--logic-high-glow); }
+    .legend i.lo { background: var(--logic-low); }
+
+    /* ---------- mission column ---------- */
+    .mission-text { font-size: 0.98rem; font-weight: 700; line-height: 1.35; }
+    .challenge-status { font-size: 0.8rem; font-weight: 700; padding: 4px 9px; border-radius: 6px; display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; }
+    .challenge-status.pending { background: var(--panel-sky); color: var(--text-muted); }
+    .challenge-status.solved { background: var(--success-bg); color: var(--success-green); border: 1px solid var(--success-green); }
+    .mission-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    button.action-btn {
+      flex: 1 1 auto; background: var(--accent-red); color: #0B0F19; border: 1px solid var(--accent-red);
+      border-radius: 8px; padding: 7px 12px; font-size: 0.82rem; font-weight: 700; cursor: pointer; transition: background .15s ease;
+    }
+    button.action-btn:hover { background: #AEE03A; }
+    button.action-btn.ghost { background: var(--panel-sky); color: var(--text-navy); border-color: var(--panel-sky); }
+    button.action-btn.ghost:hover { background: var(--sky-blue); }
+    button.action-btn.next-ready { background: var(--sage); border-color: var(--sage); color: #0B0F19; }
+    .chal-note { border-radius: 8px; padding: 7px 10px; font-size: 0.8rem; line-height: 1.45; }
+    .chal-note.hint { background: #1D2433; border: 1px solid #3B4A6B; }
+    .chal-note.skipped { background: var(--logic-high-tint); border: 1px solid var(--logic-high); }
+    .chal-note code { font-family: var(--font-mono); font-weight: 800; color: var(--accent-text); white-space: normal; }
+    .score-strip { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; font-family: var(--font-mono); font-size: 0.74rem; font-weight: 700; }
+    .score-chip { background: var(--panel-sky); border: 1px solid var(--border-sky); border-radius: 8px; padding: 4px 8px; display: flex; justify-content: space-between; gap: 6px; }
+    .score-chip b { color: var(--sky-blue-deep); }
+    .score-chip.points { grid-column: 1 / -1; background: var(--logic-high-tint); border-color: var(--logic-high); }
+    .score-chip.points b { color: var(--accent-text); font-size: 0.95rem; }
+    .score-reset { grid-column: 1 / -1; background: none; border: none; color: var(--text-muted); text-decoration: underline; cursor: pointer; font: inherit; padding: 2px; text-align: left; }
+
+    .board-rows { display: flex; flex-direction: column; gap: 5px; }
+    .board-row {
+      display: grid; grid-template-columns: 1fr auto; gap: 0 8px; text-align: left; cursor: pointer;
+      background: var(--surface-soft); border: 1px solid var(--border-sky); border-radius: 8px; padding: 5px 9px; font: inherit; color: inherit;
+    }
+    .board-row:hover { background: var(--panel-sky); }
+    .board-row.current { border-color: var(--sky-blue-deep); box-shadow: inset 3px 0 0 var(--sky-blue-deep); background: var(--panel-sky); }
+    .board-name { font-size: 0.82rem; font-weight: 800; }
+    .board-name small { font-family: var(--font-mono); font-weight: 700; color: var(--text-muted); margin-left: 4px; }
+    .board-pts { font-family: var(--font-mono); font-size: 1rem; font-weight: 800; color: var(--accent-text); grid-row: span 2; align-self: center; }
+    .board-sub { font-family: var(--font-mono); font-size: 0.68rem; color: var(--text-muted); }
+    .board-total { display: flex; justify-content: space-between; align-items: baseline; border-top: 2px solid var(--sky-blue-deep); padding-top: 6px; font-size: 0.82rem; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; }
+    .board-total b { font-family: var(--font-mono); font-size: 1.2rem; color: var(--accent-text); }
+
+    /* ---------- switches ---------- */
+    .controls-strip { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: flex-end; flex: none; }
+    .switch-group { display: flex; flex-direction: column; gap: 3px; }
+    .switch-group-label { font-size: 0.66rem; font-family: var(--font-mono); font-weight: 700; color: var(--text-muted); text-transform: uppercase; }
+    .switches-bank { display: flex; flex-wrap: wrap; gap: 6px; }
+    .bit-toggle {
+      background: var(--panel-sky); border: 2px solid var(--border-sky); border-radius: 8px;
+      min-width: 42px; min-height: 42px; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      cursor: pointer; user-select: none; transition: all .15s ease; padding: 2px 5px;
+    }
+    .bit-toggle .pin-name { font-size: 0.64rem; font-family: var(--font-mono); font-weight: 700; color: var(--text-muted); }
+    .bit-toggle .pin-val { font-family: var(--font-mono); font-size: 1.1rem; font-weight: 800; line-height: 1; color: var(--logic-low); }
+    .bit-toggle.high { border-color: var(--logic-high); background: var(--logic-high-tint); box-shadow: 0 0 10px var(--logic-high-glow); }
+    .bit-toggle.high .pin-val { color: var(--accent-text); }
+    .bit-toggle.high .pin-name { color: var(--text-navy); }
+    .mode-toggle-pill { display: inline-flex; align-items: center; gap: 8px; background: var(--panel-sky); border: 1px solid var(--border-sky); border-radius: 20px; padding: 5px 11px; font-size: 0.76rem; font-weight: 700; cursor: pointer; }
+    .mode-toggle-pill input { width: 15px; height: 15px; accent-color: var(--sky-blue-deep); cursor: pointer; }
+
+    /* ---------- block schematic ---------- */
+    .schematic-box {
+      background: var(--surface-soft); border: 1px solid var(--border-sky); border-radius: 10px;
+      padding: 8px; display: flex; align-items: center; justify-content: center; overflow: auto; min-height: 0;
+    }
+    svg.circuit-svg { width: 100%; min-width: 380px; height: auto; display: block; }
+    .wire { stroke: var(--logic-low); stroke-width: 2.5; fill: none; stroke-linecap: round; stroke-linejoin: round; transition: stroke .15s ease; }
+    .wire.high { stroke: var(--logic-high) !important; filter: drop-shadow(0 0 4px var(--logic-high-glow)); }
+    .wire-label { font-family: var(--font-mono); font-size: 12px; font-weight: 700; fill: var(--text-muted); }
+    .wire-label.high { fill: var(--accent-text); font-weight: 800; }
+    .gate-body { fill: var(--panel-sky); stroke: var(--sky-blue-deep); stroke-width: 2; rx: 6; transition: stroke .2s ease; }
+    .gate-body.active-block { stroke: var(--logic-high); stroke-width: 2.5; filter: drop-shadow(0 0 4px var(--logic-high-glow)); }
+    .gate-title { font-family: var(--font-mono); font-weight: 800; font-size: 13px; fill: var(--text-navy); text-anchor: middle; dominant-baseline: central; }
+    .gate-sub { font-family: var(--font-sans); font-size: 9px; fill: var(--text-muted); text-anchor: middle; }
+    .gate-ic { font-family: var(--font-mono); font-size: 10px; font-weight: 800; fill: var(--sky-blue-deep); text-anchor: middle; }
+    .led-node { r: 10; fill: #243049; stroke: #5A667D; stroke-width: 2; transition: all .2s ease; }
+    .led-node.lit { fill: var(--logic-high); stroke: #8FC21F; filter: drop-shadow(0 0 8px var(--logic-high-glow)); }
+
+    /* ---------- truth table ---------- */
+    .table-container { overflow: auto; border: 1px solid var(--border-sky); border-radius: 8px; min-height: 0; }
+    table.truth-table { width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 0.78rem; text-align: center; }
+    table.truth-table th { background: var(--panel-sky); padding: 5px 5px; border-bottom: 2px solid var(--border-sky); position: sticky; top: 0; z-index: 1; }
+    table.truth-table td { padding: 3px 4px; border-bottom: 1px solid #222C3F; }
+    table.truth-table tr.active-row { background: var(--logic-high-tint) !important; outline: 2px solid var(--logic-high); outline-offset: -2px; font-weight: 800; }
+    table.truth-table tr.active-row td { color: var(--accent-text); }
+
+    /* ---------- K-map ---------- */
+    .kmap-section { display: flex; flex-direction: column; gap: 6px; min-height: 0; overflow: auto; }
+    .kmap-toolbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; }
+    .kmap-title { font-size: 0.8rem; font-weight: 800; }
+    .kmap-select { background: var(--bg-card); border: 1px solid var(--border-sky); border-radius: 6px; padding: 3px 8px; font-size: 0.76rem; font-weight: 700; color: var(--text-navy); }
+    .kmap-grid-wrap { overflow-x: auto; display: flex; flex-direction: column; align-items: center; }
+    table.kmap-grid { border-collapse: collapse; font-family: var(--font-mono); font-size: 0.8rem; margin: 2px 0; }
+    table.kmap-grid th, table.kmap-grid td { border: 1px solid var(--border-sky); width: 44px; height: 34px; text-align: center; vertical-align: middle; }
+    table.kmap-grid th { background: var(--panel-sky); font-weight: 700; }
+    table.kmap-grid td.kmap-cell { min-width: 58px; height: 40px; background: var(--bg-card); transition: all .15s ease; position: relative; }
+    table.kmap-grid td.kmap-cell.active-cell { background: var(--logic-high-tint); color: var(--accent-text); font-weight: 800; outline: 2px solid var(--logic-high); outline-offset: -2px; }
+    .kmap-group-tag { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 0.74rem; font-weight: bold; margin: 1px; font-family: var(--font-mono); }
+    .group-orange { border: 2px solid #C6FF4D; color: #C6FF4D; }
+    .group-blue { border: 2px solid #5BC0FF; color: #5BC0FF; }
+    .group-green { border: 2px solid #F4F7FB; color: #F4F7FB; }
+    .group-purple { border: 2px solid #FF9F6B; color: #FF9F6B; }
+    .kmap-stage { position: relative; display: inline-block; }
+    .kloop { position: absolute; box-sizing: border-box; border: 3px solid var(--lc); border-radius: 14px; background: color-mix(in srgb, var(--lc) 14%, transparent); pointer-events: none; }
+    .kmap-note { font-size: 0.76rem; line-height: 1.5; }
+
+    /* ---------- lower card: gate diagram / pin-out ---------- */
+    .seg { display: inline-flex; border: 1px solid var(--sky-blue-deep); border-radius: 8px; overflow: hidden; }
+    .seg-btn { background: var(--bg-card); color: var(--text-navy); border: 0; padding: 5px 11px; font-size: 0.76rem; font-weight: 800; cursor: pointer; }
+    .seg-btn + .seg-btn { border-left: 1px solid var(--sky-blue-deep); }
+    .seg-btn.active { background: var(--logic-high); color: #0B0F19; }
+    .head-right { display: flex; align-items: center; gap: 8px; }
+    .zoom-btn { background: var(--bg-card); border: 1px solid var(--border-sky); border-radius: 6px; padding: 4px 9px; font-size: 0.74rem; font-weight: 700; cursor: pointer; color: var(--text-navy); }
+    .zoom-btn:hover { background: var(--panel-sky); }
+    .lower-body { position: relative; flex: 1; min-height: 280px; background: var(--surface-soft); border: 1px solid var(--border-sky); border-radius: 10px; }
+    .lower-body .view { position: absolute; inset: 0; overflow: auto; padding: 6px; }
+    .gate-scroll { display: flex; align-items: center; justify-content: center; }
+    svg.gate-svg { width: 100%; height: 100%; max-width: none; display: block; }
+    svg.gate-svg .g-label { font-family: var(--font-mono); font-size: 10px; font-weight: 700; fill: var(--text-muted); }
+    svg.gate-svg .g-label.high { fill: var(--accent-text); font-weight: 800; }
+    svg.gate-svg .g-ic { font-family: var(--font-mono); font-size: 11px; font-weight: 800; fill: var(--sky-blue-deep); }
+    svg.gate-svg .gate-body { stroke-width: 1.8; }
+    svg.gate-svg .wire { stroke-width: 1.8; }
+    svg.gate-svg .dot { fill: var(--logic-low); }
+    svg.gate-svg .dot.high { fill: var(--logic-high); }
+    svg.gate-svg .led-node { r: 6; stroke-width: 1.6; }
+    .pin-scroll { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+    .pin-svg { width: 100%; flex: 1 1 0; min-height: 0; max-width: 420px; display: block; }
+    .pin-svg .p-name { font-family: var(--font-mono); font-size: 11px; font-weight: 700; fill: var(--text-navy); }
+    .pin-svg .p-name.out { fill: var(--sky-blue-deep); }
+    .pin-svg .p-name.pwr { fill: var(--text-muted); }
+    .pin-svg .p-name.nc { fill: var(--text-muted); opacity: .6; }
+    .pin-svg .p-name.hi { fill: var(--accent-text); }
+    .pin-svg .p-num { font-family: var(--font-mono); font-size: 9px; font-weight: 600; fill: var(--text-muted); }
+    .pin-svg .p-val { font-family: var(--font-mono); font-size: 10px; font-weight: 800; fill: var(--text-navy); }
+    .pin-svg .p-chip { font-family: var(--font-mono); font-size: 15px; font-weight: 800; fill: var(--text-navy); }
+    .pin-svg .p-sub { font-family: var(--font-mono); font-size: 9px; fill: var(--text-muted); }
+    .pin-note { flex: none; font-size: 0.72rem; color: var(--text-muted); line-height: 1.4; max-width: 460px; text-align: center; }
+
+    /* ---------- enlarge dialog ---------- */
+    .zoom-modal { position: fixed; inset: 0; z-index: 50; background: rgba(5, 7, 12, 0.75); display: flex; align-items: center; justify-content: center; padding: 16px; }
+    .zoom-card { background: var(--bg-card); border-radius: 14px; max-width: 96vw; max-height: 94vh; display: flex; flex-direction: column; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6); }
+    .zoom-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--border-sky); font-weight: 800; }
+    .zoom-body { overflow: auto; padding: 14px; background: var(--surface-soft); border-radius: 0 0 14px 14px; }
+    .zoom-body svg.gate-svg { width: min(1100px, 88vw); height: auto; }
+    .zoom-body .pin-svg { width: min(560px, 88vw); height: auto; max-width: none; margin: 0 auto; }
+    .zoom-body .pin-note { max-width: none; margin: 8px auto 0; font-size: 0.85rem; }
+
+    /* ---------- one-screen layout (laptops and desktops) ---------- */
+    @media (min-width: 1100px) and (min-height: 640px) {
+      body { height: 100vh; overflow: hidden; }
+      .circuit-panel.active {
+        height: 100%;
+        grid-template-columns: 250px minmax(0, 1.25fr) minmax(0, 1fr);
+      }
+      .col.col-mission { overflow: auto; }
+      .card.schem { flex: 1 1 0; }
+      .card.truth { flex: 0 1 auto; }
+      .card.kmapcard { flex: 0 1 auto; }
+      .card.lower { flex: 1 1 0; }
+      .schematic-box { flex: 1 1 0; }
+      svg.circuit-svg { min-width: 0; height: 100%; }
+      .lower-body { min-height: 0; }
+      .table-container { max-height: 100%; }
+      .card.truth .table-container { flex: 0 1 auto; }
+    }
+    @media (max-width: 1099px), (max-height: 639px) {
+      main { overflow: visible; }
+      .circuit-panel.active { display: flex; flex-direction: column; }
+      .schematic-box { overflow-x: auto; }
+      .table-container { max-height: 300px; }
+      .lower-body .view { overflow: auto; }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="header-content">
+      <h1 class="app-title">Circuit Visualizer</h1>
+      <span class="header-score" id="header-score">Total score: <b>0</b></span>
+      <nav class="circuit-tabs" role="tablist">
+        <button class="tab-btn active" data-circuit="mux41">1. 4:1 Multiplexer</button>
+        <button class="tab-btn" data-circuit="demux14">2. 1:4 Demultiplexer</button>
+        <button class="tab-btn" data-circuit="decoder38">3. 3:8 Decoder</button>
+        <button class="tab-btn" data-circuit="encoder83">4. 8:3 Priority Encoder</button>
+        <button class="tab-btn" data-circuit="mux81">5. 8:1 Multiplexer</button>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main-container"></main>
+  <div id="zoom-root"></div>
+
+  <script>
+    /* ==========================================================================
+       1. PURE LOGIC FUNCTIONS (Small, separate, well-commented for viva explanation)
+       ========================================================================== */
+
+    /**
+     * 4:1 Multiplexer
+     * Y = S1'S0'D0 + S1'S0 D1 + S1 S0'D2 + S1 S0 D3
+     */
+    function muxOut(d, s) {
+      const sel = (s[0] << 1) | s[1];
+      return d[sel] & 1;
+    }
+
+    /**
+     * 1:4 Demultiplexer
+     * Passes data input Din exclusively to channel selected by S1, S0
+     */
+    function demuxOut(din, s) {
+      const sel = (s[0] << 1) | s[1];
+      const out = [0, 0, 0, 0];
+      out[sel] = din & 1;
+      return out;
+    }
+
+    /**
+     * 3:8 Decoder with active-high Enable (E)
+     * Exactly one output Yk = 1 when en=1, all 0 when en=0
+     */
+    function decoderOut(abc, en) {
+      const out = [0, 0, 0, 0, 0, 0, 0, 0];
+      if ((en & 1) === 0) return out;
+      const idx = (abc[0] << 2) | (abc[1] << 1) | abc[2];
+      out[idx] = 1;
+      return out;
+    }
+
+    /**
+     * 8:3 Priority Encoder
+     * Priority ON: Highest-numbered active input wins
+     * Priority OFF: Naive OR-matrix showing multi-press collision
+     */
+    function encoderOut(inputs, priority = true) {
+      if (priority) {
+        for (let i = 7; i >= 0; i--) {
+          if (inputs[i] === 1) {
+            return {
+              a2: (i >> 2) & 1,
+              a1: (i >> 1) & 1,
+              a0: i & 1,
+              valid: 1,
+              winner: i
+            };
+          }
+        }
+        return { a2: 0, a1: 0, a0: 0, valid: 0, winner: -1 };
+      } else {
+        const a2 = inputs[4] | inputs[5] | inputs[6] | inputs[7];
+        const a1 = inputs[2] | inputs[3] | inputs[6] | inputs[7];
+        const a0 = inputs[1] | inputs[3] | inputs[5] | inputs[7];
+        const valid = inputs.some(v => v === 1) ? 1 : 0;
+        return { a2, a1, a0, valid, winner: valid ? 99 : -1 };
+      }
+    }
+
+    /**
+     * Composite 8:1 Multiplexer built from two 4:1 MUXes and one 2:1 MUX
+     * S1, S0 drive both 4:1 stages; S2 steers the final 2:1 stage
+     */
+    function mux8Out(d, s) {
+      const s2 = s[0], s1 = s[1], s0 = s[2];
+      const mux0 = muxOut(d.slice(0, 4), [s1, s0]);
+      const mux1 = muxOut(d.slice(4, 8), [s1, s0]);
+      const finalY = s2 === 0 ? mux0 : mux1;
+      return { finalY, mux0, mux1 };
+    }
+
+    /* ==========================================================================
+       2. VERIFICATION SUITE (Self-test on load)
+       ========================================================================== */
+    function runSelfTests() {
+      // Test MUX 4:1
+      for (let s = 0; s < 4; s++) {
+        const d = [0, 0, 0, 0];
+        d[s] = 1;
+        console.assert(muxOut(d, [(s >> 1) & 1, s & 1]) === 1, `MUX 4:1 failure at ${s}`);
+      }
+      // Test DEMUX 1:4
+      for (let s = 0; s < 4; s++) {
+        const res = demuxOut(1, [(s >> 1) & 1, s & 1]);
+        console.assert(res[s] === 1 && res.reduce((a, b) => a + b, 0) === 1, `DEMUX 1:4 failure at ${s}`);
+      }
+      // Test Decoder 3:8
+      console.assert(decoderOut([1, 1, 1], 0).every(v => v === 0), "Decoder disabled failure");
+      for (let i = 0; i < 8; i++) {
+        const r = decoderOut([(i >> 2) & 1, (i >> 1) & 1, i & 1], 1);
+        console.assert(r[i] === 1, `Decoder failure at minterm ${i}`);
+      }
+      // Test Encoder 8:3
+      const encP = encoderOut([0, 1, 1, 0, 0, 0, 0, 0], true);
+      console.assert(encP.winner === 2 && encP.a1 === 1 && encP.a0 === 0, "Encoder priority failure");
+      // Test MUX 8:1
+      for (let i = 0; i < 8; i++) {
+        const d = new Array(8).fill(0);
+        d[i] = 1;
+        const s = [(i >> 2) & 1, (i >> 1) & 1, i & 1];
+        console.assert(mux8Out(d, s).finalY === 1, `MUX 8:1 failure at ${i}`);
+      }
+    }
+    runSelfTests();
+
+    /* ==========================================================================
+       3. STATE MANAGEMENT
+       ========================================================================== */
+    const state = {
+      activeTab: "mux41",
+      switches: {
+        mux41: { d: [0, 0, 1, 0], s: [1, 0] }, // Starting state: D2=1, S=10
+        demux14: { din: 1, s: [0, 1] },
+        decoder38: { en: 1, abc: [1, 0, 1] },
+        encoder83: { inputs: [0, 0, 0, 0, 0, 0, 1, 0], priority: true },
+        mux81: { d: [0, 0, 0, 0, 0, 1, 0, 0], s: [1, 0, 1] }
+      },
+      kmapView: {
+        demux14: 1,
+        decoder38: 5,
+        encoder83: "A1"
+      },
+      challenge: {
+        mux41: null,
+        demux14: null,
+        decoder38: null,
+        encoder83: null,
+        mux81: null
+      }
+    };
+
+    /* ==========================================================================
+       4. CHALLENGE SYSTEM (Dynamically validated via circuit logic)
+       ========================================================================== */
+    const bit2 = (n, w) => n.toString(2).padStart(w, "0");
+
+    /* Each generator returns:
+       text   - the task shown to the student
+       hint   - a nudge that does not give the answer away
+       answer - the full solution (shown when the student skips the challenge)
+       check  - runs the real circuit logic on the current switches */
+    const challengeGenerators = {
+      mux41: () => {
+        const ch = Math.floor(Math.random() * 4);
+        const targetVal = Math.random() > 0.5 ? 1 : 0;
+        return {
+          text: `Select D${ch} and make Y = ${targetVal}.`,
+          hint: `S1 S0 spell the number of the input you want, in binary. Then set that data input to ${targetVal}.`,
+          answer: `S1 S0 = ${bit2(ch, 2)} (selects D${ch}) and D${ch} = ${targetVal}. Y follows D${ch}, so Y = ${targetVal}.`,
+          check: () => {
+            const { d, s } = state.switches.mux41;
+            const sel = (s[0] << 1) | s[1];
+            return sel === ch && muxOut(d, s) === targetVal && d[ch] === targetVal;
+          }
+        };
+      },
+      demux14: () => {
+        const targetCh = Math.floor(Math.random() * 4);
+        return {
+          text: `Route data Din = 1 to output Y${targetCh}.`,
+          hint: `Din must be 1. S1 S0 spell the output number in binary.`,
+          answer: `Din = 1, S1 S0 = ${bit2(targetCh, 2)}. Only Y${targetCh} follows Din.`,
+          check: () => {
+            const { din, s } = state.switches.demux14;
+            const out = demuxOut(din, s);
+            return din === 1 && out[targetCh] === 1;
+          }
+        };
+      },
+      decoder38: () => {
+        const targetM = Math.floor(Math.random() * 8);
+        return {
+          text: `Make Y${targetM} = 1 (activate minterm m${targetM}).`,
+          hint: `Enable must be 1. A B C spell the minterm number in binary, with A as the top bit.`,
+          answer: `EN = 1 and A B C = ${bit2(targetM, 3)}.`,
+          check: () => {
+            const { en, abc } = state.switches.decoder38;
+            const out = decoderOut(abc, en);
+            return en === 1 && out[targetM] === 1;
+          }
+        };
+      },
+      encoder83: () => {
+        const targetIdx = 1 + Math.floor(Math.random() * 7);
+        return {
+          text: `With priority ON, produce A2 A1 A0 = ${bit2(targetIdx, 3).split("").join(" ")}.`,
+          hint: `The output is the binary number of the highest input that is ON. Keep every higher input OFF.`,
+          answer: `Switch input I${targetIdx} ON, keep I${targetIdx + 1 <= 7 ? `${targetIdx + 1} to I7` : "none above it"} OFF, and leave priority ON. Lower inputs can be anything.`,
+          check: () => {
+            const { inputs, priority } = state.switches.encoder83;
+            const res = encoderOut(inputs, priority);
+            return priority && res.valid === 1 && res.winner === targetIdx;
+          }
+        };
+      },
+      mux81: () => {
+        const ch = Math.floor(Math.random() * 8);
+        const targetVal = Math.random() > 0.4 ? 1 : 0;
+        return {
+          text: `Select D${ch} and make Y = ${targetVal}.`,
+          hint: `S2 S1 S0 spell the input number in binary. S2 picks the lower or upper 4:1 MUX.`,
+          answer: `S2 S1 S0 = ${bit2(ch, 3)} (selects D${ch}) and D${ch} = ${targetVal}.`,
+          check: () => {
+            const { d, s } = state.switches.mux81;
+            const sel = (s[0] << 2) | (s[1] << 1) | s[2];
+            const res = mux8Out(d, s);
+            return sel === ch && res.finalY === targetVal && d[ch] === targetVal;
+          }
+        };
+      }
+    };
+
+    /* Score per circuit: points, solved, skipped, streak */
+    const CIRCUIT_KEYS = ["mux41", "demux14", "decoder38", "encoder83", "mux81"];
+    state.score = {};
+    CIRCUIT_KEYS.forEach(k => { state.score[k] = { points: 0, solved: 0, skipped: 0, streak: 0, best: 0 }; });
+    state.lastResult = {};   // circuit -> { text, answer } of a skipped challenge
+
+    function totalPoints() {
+      return CIRCUIT_KEYS.reduce((sum, k) => sum + state.score[k].points, 0);
+    }
+
+    function newChallenge(circuitKey, fromButton) {
+      const old = state.challenge[circuitKey];
+      const sc = state.score[circuitKey];
+
+      // Pressing "New challenge" before solving counts as a skip and reveals the answer.
+      if (fromButton && old && !old.solved) {
+        sc.skipped += 1;
+        sc.streak = 0;
+        state.lastResult[circuitKey] = { text: old.text, answer: old.answer };
+      } else {
+        state.lastResult[circuitKey] = null;
+      }
+
+      // Never hand out a challenge the current switch positions already satisfy.
+      let fresh = null;
+      for (let i = 0; i < 25; i++) {
+        fresh = challengeGenerators[circuitKey]();
+        if (!fresh.check()) break;
+      }
+      fresh.solved = false;
+      fresh.hintShown = false;
+      state.challenge[circuitKey] = fresh;
+      updateChallengeUI(circuitKey);
+    }
+
+    function showHint(circuitKey) {
+      const chal = state.challenge[circuitKey];
+      if (!chal || chal.solved) return;
+      chal.hintShown = true;
+      updateChallengeUI(circuitKey);
+    }
+
+    function resetScore(circuitKey) {
+      state.score[circuitKey] = { points: 0, solved: 0, skipped: 0, streak: 0, best: 0 };
+      updateChallengeUI(circuitKey);
+    }
+
+    function updateChallengeUI(circuitKey) {
+      const chal = state.challenge[circuitKey];
+      const banner = document.getElementById(`chal-target-${circuitKey}`);
+      const status = document.getElementById(`chal-status-${circuitKey}`);
+      if (!chal || !banner || !status) return;
+
+      banner.textContent = chal.text;
+
+      // Register the first time the challenge is satisfied.
+      const sc = state.score[circuitKey];
+      let earned = null;
+      if (!chal.solved && chal.check()) {
+        chal.solved = true;
+        earned = chal.hintShown ? 5 : 10;
+        chal.earned = earned;
+        sc.points += earned;
+        sc.solved += 1;
+        sc.streak += 1;
+        sc.best = Math.max(sc.best, sc.streak);
+      }
+
+      if (chal.solved) {
+        status.className = "challenge-status solved";
+        status.innerHTML = `✓ Correct! +${chal.earned} points`;
+      } else {
+        status.className = "challenge-status pending";
+        status.innerHTML = "○ In progress";
+      }
+
+      const nextBtn = document.getElementById(`chal-next-${circuitKey}`);
+      nextBtn.textContent = chal.solved ? "Next challenge →" : "Skip / New challenge";
+      nextBtn.classList.toggle("next-ready", chal.solved);
+
+      const hintBtn = document.getElementById(`chal-hint-${circuitKey}`);
+      hintBtn.hidden = chal.solved || chal.hintShown;
+
+      const note = document.getElementById(`chal-note-${circuitKey}`);
+      const last = state.lastResult[circuitKey];
+      let noteHTML = "";
+      if (chal.hintShown && !chal.solved) {
+        noteHTML += `<div class="chal-note hint"><strong>Hint:</strong> ${chal.hint} <em>(solving with a hint gives 5 points instead of 10)</em></div>`;
+      }
+      if (last) {
+        noteHTML += `<div class="chal-note skipped"><strong>Skipped:</strong> ${last.text}<br><strong>Answer:</strong> <code>${last.answer}</code></div>`;
+      }
+      note.innerHTML = noteHTML;
+      note.hidden = !noteHTML;
+
+      document.getElementById(`chal-score-${circuitKey}`).innerHTML = `
+        <span class="score-chip points">Points <b>${sc.points}</b></span>
+        <span class="score-chip">Solved <b>${sc.solved}</b></span>
+        <span class="score-chip">Skipped <b>${sc.skipped}</b></span>
+        <span class="score-chip">Streak <b>${sc.streak}</b></span>
+        <span class="score-chip">Best streak <b>${sc.best}</b></span>
+        <button class="score-reset" onclick="resetScore('${circuitKey}')">Reset score</button>
+      `;
+      document.getElementById("header-score").innerHTML = `Total score: <b>${totalPoints()}</b>`;
+      renderBoards();
+    }
+
+    /* ==========================================================================
+       4b. GATE-LEVEL LOGIC DIAGRAMS
+       One small drawing routine builds every gate diagram. Each circuit only
+       describes its controls, its AND terms and its OR outputs, so the lit wires
+       always come from the same values as the block diagram.
+       ========================================================================== */
+    function gateDiagram(spec, ic) {
+      const PIN = 10, ROWGAP = 22, LEFT = 46, GATE_W = 36, OR_W = 40;
+      const ctrls = spec.controls, terms = spec.terms, outs = spec.outputs;
+      const lit = l => ctrls[l.c].val ^ (l.neg ? 1 : 0);
+
+      // ---- values ----
+      terms.forEach(t => {
+        const vals = t.lits.map(lit);
+        if (t.direct) vals.unshift(t.direct.val);
+        t.nIn = vals.length;
+        t.val = vals.every(v => v === 1) ? 1 : 0;
+      });
+      outs.forEach(o => { o.val = o.terms.some(i => terms[i].val) ? 1 : 0; });
+
+      // ---- horizontal layout: control buses ----
+      let X = LEFT + 14;
+      ctrls.forEach(c => {
+        c.xt = X + 6;
+        if (c.comp) { c.xc = c.xt + 32; X += 46; } else { X += 22; }
+      });
+      const xAnd = X + 10;
+      const xTermOut = xAnd + GATE_W;
+
+      // ---- vertical layout: control header rows, then term rows ----
+      ctrls.forEach((c, i) => { c.y = 14 + i * ROWGAP; });
+      let y = 14 + ctrls.length * ROWGAP + 10;
+      terms.forEach(t => {
+        if (t.nIn >= 2) { t.h = t.nIn * PIN + 6; t.isGate = true; } else { t.h = 12; t.isGate = false; }
+        t.y = y;
+        t.yOut = t.y + t.h / 2;
+        y += t.h + (t.isGate ? 8 : 5);
+      });
+      const termsBottom = y;
+
+      // pin positions (direct pin first, then literals)
+      const pinY = (t, k) => t.isGate ? t.y + 3 + PIN * (k + 0.5) : t.y + 6;
+
+      // ---- lanes for term -> OR wiring ----
+      const orOuts = outs.filter(o => o.terms.length >= 2);
+      const usedTerms = [];
+      orOuts.forEach(o => o.terms.forEach(i => { if (!usedTerms.includes(i)) usedTerms.push(i); }));
+      const laneX = {};
+      usedTerms.forEach((ti, n) => { laneX[ti] = xTermOut + 14 + n * 6; });
+      const xOr = xTermOut + 14 + usedTerms.length * 6 + 12;
+      const xLed = xOr + OR_W + 18;
+
+      // ---- OR gate placement (centered on their terms, then spaced apart) ----
+      orOuts.forEach(o => {
+        o.h = Math.max(2, o.terms.length) * PIN + 6;
+        o.want = o.terms.reduce((s, i) => s + terms[i].yOut, 0) / o.terms.length - o.h / 2;
+      });
+      let cursor = 0;
+      [...orOuts].sort((a, b) => a.want - b.want).forEach(o => {
+        o.y = Math.max(o.want, cursor, 14 + ctrls.length * ROWGAP + 10);
+        cursor = o.y + o.h + 12;
+      });
+      const orBottom = orOuts.length ? cursor : 0;
+      const W = xLed + 74;
+      const H = Math.max(termsBottom, orBottom) + 8;
+
+      const wire = (d, v) => `<path d="${d}" class="wire ${v ? 'high' : ''}"/>`;
+      const dot = (x, yy, v) => `<circle cx="${x}" cy="${yy}" r="2.6" class="dot ${v ? 'high' : ''}"/>`;
+      let wires = "", gates = "", labels = "";
+
+      // ---- control headers and buses ----
+      ctrls.forEach((c, i) => {
+        let maxT = c.y, maxC = c.y;
+        terms.forEach(t => {
+          let k = t.direct ? 1 : 0;
+          t.lits.forEach(l => {
+            if (l.c === i) { const py = pinY(t, k); if (l.neg) maxC = Math.max(maxC, py); else maxT = Math.max(maxT, py); }
+            k++;
+          });
+        });
+        const endX = c.comp ? c.xc : c.xt;
+        wires += wire(`M${LEFT - 2} ${c.y} H${c.xt}`, c.val);
+        if (maxT > c.y) wires += wire(`M${c.xt} ${c.y} V${maxT}`, c.val);
+        labels += `<text x="2" y="${c.y + 3.5}" class="g-label ${c.val ? 'high' : ''}">${c.name}=${c.val}</text>`;
+        if (c.comp) {
+          wires += wire(`M${c.xt} ${c.y} H${c.xt + 4}`, c.val);
+          gates += `<path d="M${c.xt + 4} ${c.y - 6} V${c.y + 6} L${c.xt + 20} ${c.y} Z" class="gate-body ${c.val ? '' : 'active-block'}"/>`
+                 + `<circle cx="${c.xt + 23}" cy="${c.y}" r="3" class="gate-body ${c.val ? '' : 'active-block'}"/>`;
+          wires += wire(`M${c.xt + 26} ${c.y} H${c.xc}`, 1 - c.val);
+          if (maxC > c.y) wires += wire(`M${c.xc} ${c.y} V${maxC}`, 1 - c.val);
+          wires += dot(c.xt, c.y, c.val);
+        } else if (maxT > c.y) {
+          wires += dot(c.xt, c.y, c.val);
+        }
+      });
+
+      // ---- term rows: direct data lines, taps, gate bodies ----
+      terms.forEach((t, ti) => {
+        let k = 0;
+        if (t.direct) {
+          const py = pinY(t, 0);
+          wires += wire(`M${LEFT - 2} ${py} H${xAnd}`, t.direct.val);
+          labels += `<text x="2" y="${py + 3.5}" class="g-label ${t.direct.val ? 'high' : ''}">${t.direct.name}=${t.direct.val}</text>`;
+          k = 1;
+        }
+        t.lits.forEach(l => {
+          const c = ctrls[l.c], py = pinY(t, k), bx = l.neg ? c.xc : c.xt, v = lit(l);
+          wires += wire(`M${bx} ${py} H${xAnd + (t.isGate ? 0 : GATE_W)}`, v);
+          wires += dot(bx, py, v);
+          k++;
+        });
+        if (t.isGate) {
+          gates += `<path d="M${xAnd} ${t.y} H${xAnd + 18} A18 ${t.h / 2} 0 0 1 ${xAnd + 18} ${t.y + t.h} H${xAnd} Z" class="gate-body ${t.val ? 'active-block' : ''}"/>`;
+        }
+      });
+
+      // ---- term -> OR wiring ----
+      orOuts.forEach(o => {
+        o.terms.forEach((ti, j) => {
+          const t = terms[ti], py = o.y + 3 + PIN * (j + 0.5);
+          wires += wire(`M${xTermOut} ${t.yOut} H${laneX[ti]} V${py} H${xOr + 8}`, t.val);
+        });
+        gates += `<path d="M${xOr} ${o.y} Q${xOr + OR_W * 0.5} ${o.y} ${xOr + OR_W} ${o.y + o.h / 2} Q${xOr + OR_W * 0.5} ${o.y + o.h} ${xOr} ${o.y + o.h} Q${xOr + OR_W * 0.3} ${o.y + o.h / 2} ${xOr} ${o.y} Z" class="gate-body ${o.val ? 'active-block' : ''}"/>`;
+        o.yOut = o.y + o.h / 2;
+        wires += wire(`M${xOr + OR_W} ${o.yOut} H${xLed - 6}`, o.val);
+      });
+      // junction dots where one term feeds several ORs
+      usedTerms.forEach(ti => {
+        const n = orOuts.filter(o => o.terms.includes(ti)).length;
+        if (n > 1) wires += dot(laneX[ti], terms[ti].yOut, terms[ti].val);
+      });
+
+      // ---- outputs ----
+      outs.forEach(o => {
+        let yo;
+        if (o.terms.length >= 2) yo = o.yOut;
+        else {
+          const t = terms[o.terms[0]];
+          yo = t.yOut;
+          wires += wire(`M${xTermOut} ${yo} H${xLed - 6}`, t.val);
+        }
+        gates += `<circle cx="${xLed}" cy="${yo}" r="6" class="led-node ${o.val ? 'lit' : ''}"/>`;
+        labels += `<text x="${xLed + 12}" y="${yo + 3.5}" class="g-label ${o.val ? 'high' : ''}">${o.name}=${o.val}</text>`;
+      });
+
+      return `<svg class="gate-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${spec.title}">${wires}${gates}${labels}${ic ? `<text x="${W - 4}" y="10" text-anchor="end" class="g-ic">IC ${ic} equivalent</text>` : ""}</svg>`;
+    }
+
+    /* Build the spec for each circuit from the live switch values */
+    function gateSpecMux41() {
+      const { d, s } = state.switches.mux41;
+      const terms = [0, 1, 2, 3].map(k => ({
+        direct: { name: `D${k}`, val: d[k] },
+        lits: [{ c: 0, neg: ((k >> 1) & 1) === 0 }, { c: 1, neg: (k & 1) === 0 }]
+      }));
+      return { title: "4:1 multiplexer built from gates",
+        controls: [{ name: "S1", val: s[0], comp: true }, { name: "S0", val: s[1], comp: true }],
+        terms, outputs: [{ name: "Y", terms: [0, 1, 2, 3] }] };
+    }
+    function gateSpecDemux14() {
+      const { din, s } = state.switches.demux14;
+      const terms = [0, 1, 2, 3].map(k => ({
+        lits: [{ c: 0, neg: false }, { c: 1, neg: ((k >> 1) & 1) === 0 }, { c: 2, neg: (k & 1) === 0 }]
+      }));
+      return { title: "1:4 demultiplexer built from gates",
+        controls: [{ name: "Din", val: din, comp: false }, { name: "S1", val: s[0], comp: true }, { name: "S0", val: s[1], comp: true }],
+        terms, outputs: [0, 1, 2, 3].map(k => ({ name: `Y${k}`, terms: [k] })) };
+    }
+    function gateSpecDecoder38() {
+      const { en, abc } = state.switches.decoder38;
+      const terms = [0, 1, 2, 3, 4, 5, 6, 7].map(k => ({
+        lits: [{ c: 0, neg: false }, { c: 1, neg: ((k >> 2) & 1) === 0 }, { c: 2, neg: ((k >> 1) & 1) === 0 }, { c: 3, neg: (k & 1) === 0 }]
+      }));
+      return { title: "3:8 decoder built from gates",
+        controls: [{ name: "EN", val: en, comp: false }, { name: "A", val: abc[0], comp: true }, { name: "B", val: abc[1], comp: true }, { name: "C", val: abc[2], comp: true }],
+        terms, outputs: [0, 1, 2, 3, 4, 5, 6, 7].map(k => ({ name: `Y${k}`, terms: [k] })) };
+    }
+    function gateSpecMux81() {
+      const { d, s } = state.switches.mux81;
+      const terms = [0, 1, 2, 3, 4, 5, 6, 7].map(k => ({
+        direct: { name: `D${k}`, val: d[k] },
+        lits: [{ c: 0, neg: ((k >> 2) & 1) === 0 }, { c: 1, neg: ((k >> 1) & 1) === 0 }, { c: 2, neg: (k & 1) === 0 }]
+      }));
+      return { title: "8:1 multiplexer built from gates",
+        controls: [{ name: "S2", val: s[0], comp: true }, { name: "S1", val: s[1], comp: true }, { name: "S0", val: s[2], comp: true }],
+        terms, outputs: [{ name: "Y", terms: [0, 1, 2, 3, 4, 5, 6, 7] }] };
+    }
+    function gateSpecEncoder83() {
+      const { inputs, priority } = state.switches.encoder83;
+      const I = k => inputs[k];
+      if (!priority) {
+        // Plain OR matrix: every input pulls its code bits high
+        const controls = [7, 6, 5, 4, 3, 2, 1, 0].map(k => ({ name: `I${k}`, val: I(k), comp: false }));
+        const idx = k => 7 - k;                       // controls are listed I7..I0
+        const terms = [7, 6, 5, 4, 3, 2, 1, 0].map(k => ({ lits: [{ c: idx(k), neg: false }] }));
+        const T = k => idx(k);                        // term index of Ik is the same as its control index
+        return { title: "8:3 encoder (priority off) built from OR gates", controls, terms,
+          outputs: [
+            { name: "A2", terms: [T(4), T(5), T(6), T(7)] },
+            { name: "A1", terms: [T(2), T(3), T(6), T(7)] },
+            { name: "A0", terms: [T(1), T(3), T(5), T(7)] },
+            { name: "V", terms: [7, 6, 5, 4, 3, 2, 1, 0].map(T) }
+          ] };
+      }
+      const comp = new Set([6, 5, 4, 2]);             // inputs that are used inverted
+      const controls = [7, 6, 5, 4, 3, 2, 1, 0].map(k => ({ name: `I${k}`, val: I(k), comp: comp.has(k) }));
+      const c = k => 7 - k;
+      const terms = [7, 6, 5, 4, 3, 2, 1, 0].map(k => ({ lits: [{ c: c(k), neg: false }] }));
+      const T = k => c(k);
+      const add = lits => { terms.push({ lits: lits.map(([k, neg]) => ({ c: c(k), neg })) }); return terms.length - 1; };
+      const a1 = add([[5, true], [4, true], [3, false]]);
+      const a2 = add([[5, true], [4, true], [2, false]]);
+      const b1 = add([[6, true], [5, false]]);
+      const b2 = add([[6, true], [4, true], [3, false]]);
+      const b3 = add([[6, true], [4, true], [2, true], [1, false]]);
+      return { title: "8:3 priority encoder built from gates", controls, terms,
+        outputs: [
+          { name: "A2", terms: [T(7), T(6), T(5), T(4)] },
+          { name: "A1", terms: [T(7), T(6), a1, a2] },
+          { name: "A0", terms: [T(7), b1, b2, b3] },
+          { name: "V", terms: [7, 6, 5, 4, 3, 2, 1, 0].map(T) }
+        ] };
+    }
+    const gateSpecs = { mux41: gateSpecMux41, demux14: gateSpecDemux14, decoder38: gateSpecDecoder38, encoder83: gateSpecEncoder83, mux81: gateSpecMux81 };
+    function renderGateDiagram(ck) {
+      const box = document.getElementById(`gates-${ck}`);
+      if (box) box.innerHTML = gateDiagram(gateSpecs[ck](), PART_INFO[ck].ic);
+      renderPinout(ck);
+      drawLoops(ck);
+    }
+
+    /* ==========================================================================
+       4c. IC PIN-OUT DIAGRAMS
+       Each spec lists the 16 pins of a DIP package. val is the live logic level
+       (null = not a signal), role is in / out / pwr / nc, bar marks active-low pins.
+       ========================================================================== */
+    function pinoutSVG(ic) {
+      const rowY = i => 52 + i * 26;
+      const left = ic.pins.slice(0, 8);                    // pins 1..8, top to bottom
+      const right = ic.pins.slice(8).reverse();            // pins 16..9, top to bottom
+      const pinHTML = (p, i, side) => {
+        const y = rowY(i), L = side === "L";
+        const stubX1 = L ? 68 : 272, stubX2 = L ? 104 : 236;
+        const badgeX = L ? 48 : 274;
+        const nameX = L ? 44 : 298, anchor = L ? "end" : "start";
+        const numX = L ? 110 : 230, numAnchor = L ? "start" : "end";
+        const stroke = p.val === 1 ? "var(--logic-high)" : p.val === 0 ? "var(--logic-low)" : "var(--border-sky)";
+        const badgeFill = p.val === 1 ? "var(--logic-high)" : p.val === 0 ? "var(--logic-low)" : "none";
+        const cls = p.role + (p.val === 1 && p.role !== "nc" ? " hi" : "");
+        const deco = p.bar ? ' style="text-decoration: overline"' : "";
+        return `
+          <line x1="${stubX1}" y1="${y}" x2="${stubX2}" y2="${y}" stroke="${stroke}" stroke-width="3" stroke-linecap="round" />
+          <rect x="${badgeX}" y="${y - 8}" width="18" height="16" rx="4" fill="${badgeFill}" stroke="${p.val === null ? 'var(--border-sky)' : 'none'}" />
+          ${p.val === null ? "" : `<text x="${badgeX + 9}" y="${y + 4}" text-anchor="middle" class="p-val">${p.val}</text>`}
+          <text x="${numX}" y="${y + 3}" text-anchor="${numAnchor}" class="p-num">${p.n}</text>
+          <text x="${nameX}" y="${y + 4}" text-anchor="${anchor}" class="p-name ${cls}"${deco}>${p.name}</text>`;
+      };
+      return `<svg class="pin-svg" viewBox="0 0 340 276" role="img" aria-label="${ic.chip} pin-out">
+        <path d="M104 36 H236 V252 H104 Z" fill="var(--panel-sky)" stroke="var(--sky-blue-deep)" stroke-width="2" />
+        <path d="M161 36 A9 9 0 0 0 179 36" fill="var(--bg-card)" stroke="var(--sky-blue-deep)" stroke-width="2" />
+        <text x="170" y="136" text-anchor="middle" class="p-chip">${ic.chip}</text>
+        <text x="170" y="152" text-anchor="middle" class="p-sub">${ic.sub}</text>
+        <text x="170" y="166" text-anchor="middle" class="p-sub">DIP-16</text>
+        ${left.map((p, i) => pinHTML(p, i, "L")).join("")}
+        ${right.map((p, i) => pinHTML(p, i, "R")).join("")}
+      </svg>`;
+    }
+    const P = (n, name, role, val, bar) => ({ n, name, role, val: val === undefined ? null : val, bar: !!bar });
+    const NC = (n, name, bar) => P(n, name, "nc", null, bar);
+
+    function pinSpecMux41() {
+      const { d, s } = state.switches.mux41;
+      const y = muxOut(d, s);
+      return { chip: "74153", sub: "dual 4:1 MUX", pins: [
+        P(1, "1G", "in", 0, true), P(2, "B", "in", s[0]), P(3, "1C3", "in", d[3]), P(4, "1C2", "in", d[2]),
+        P(5, "1C1", "in", d[1]), P(6, "1C0", "in", d[0]), P(7, "1Y", "out", y), P(8, "GND", "pwr"),
+        NC(9, "2Y"), NC(10, "2C0"), NC(11, "2C1"), NC(12, "2C2"), NC(13, "2C3"), P(14, "A", "in", s[1]), NC(15, "2G", true), P(16, "VCC", "pwr")
+      ], note: "Section 1 is used. S1 goes to B (pin 2) and S0 goes to A (pin 14). Tie 1G (pin 1) to GND to enable the MUX. The second section is left unused." };
+    }
+    function pinSpecDemux14() {
+      const { din, s } = state.switches.demux14;
+      const sel = (s[0] << 1) | s[1];
+      const yv = k => (k === sel ? din : 1);
+      return { chip: "74139", sub: "dual 1:4 DEMUX", pins: [
+        P(1, "1G", "in", din, true), P(2, "1A", "in", s[1]), P(3, "1B", "in", s[0]), P(4, "1Y0", "out", yv(0), true),
+        P(5, "1Y1", "out", yv(1), true), P(6, "1Y2", "out", yv(2), true), P(7, "1Y3", "out", yv(3), true), P(8, "GND", "pwr"),
+        NC(9, "2Y3", true), NC(10, "2Y2", true), NC(11, "2Y1", true), NC(12, "2Y0", true), NC(13, "2B"), NC(14, "2A"), NC(15, "2G", true), P(16, "VCC", "pwr")
+      ], note: "Apply the data (Din) to the enable pin 1G. S1 goes to 1B and S0 goes to 1A. The outputs are active-low: unselected outputs stay at 1 and the selected one follows Din." };
+    }
+    function pinSpecDecoder38() {
+      const { en, abc } = state.switches.decoder38;
+      const out = decoderOut(abc, en);
+      const yv = k => 1 - out[k];
+      return { chip: "74138", sub: "3:8 decoder", pins: [
+        P(1, "A", "in", abc[2]), P(2, "B", "in", abc[1]), P(3, "C", "in", abc[0]), P(4, "G2A", "in", 0, true),
+        P(5, "G2B", "in", 0, true), P(6, "G1", "in", en), P(7, "Y7", "out", yv(7), true), P(8, "GND", "pwr"),
+        P(9, "Y6", "out", yv(6), true), P(10, "Y5", "out", yv(5), true), P(11, "Y4", "out", yv(4), true), P(12, "Y3", "out", yv(3), true),
+        P(13, "Y2", "out", yv(2), true), P(14, "Y1", "out", yv(1), true), P(15, "Y0", "out", yv(0), true), P(16, "VCC", "pwr")
+      ], note: "On the IC, A is the least significant bit, so the simulator's C goes to pin A (1) and the simulator's A goes to pin C (3). Enable = G1 high with G2A and G2B low. Outputs are active-low: the selected output reads 0." };
+    }
+    function pinSpecEncoder83() {
+      const { inputs } = state.switches.encoder83;
+      const res = encoderOut(inputs, true);
+      const iv = k => 1 - inputs[k];
+      const any = res.valid ? 1 : 0;
+      return { chip: "74148", sub: "8:3 encoder", pins: [
+        P(1, "I4", "in", iv(4), true), P(2, "I5", "in", iv(5), true), P(3, "I6", "in", iv(6), true), P(4, "I7", "in", iv(7), true),
+        P(5, "EI", "in", 0, true), P(6, "A2", "out", 1 - res.a2, true), P(7, "A1", "out", 1 - res.a1, true), P(8, "GND", "pwr"),
+        P(9, "A0", "out", 1 - res.a0, true), P(10, "I0", "in", iv(0), true), P(11, "I1", "in", iv(1), true), P(12, "I2", "in", iv(2), true),
+        P(13, "I3", "in", iv(3), true), P(14, "GS", "out", 1 - any, true), P(15, "EO", "out", any ? 1 : 0, true), P(16, "VCC", "pwr")
+      ], note: "The 74148 has active-low inputs and outputs, so a pressed input reads 0 and the code appears inverted. Tie EI (pin 5) to GND to enable it. The IC always uses priority, even if the simulator's priority switch is off." };
+    }
+    function pinSpecMux81() {
+      const { d, s } = state.switches.mux81;
+      const y = mux8Out(d, s).finalY;
+      return { chip: "74151", sub: "8:1 MUX", pins: [
+        P(1, "D3", "in", d[3]), P(2, "D2", "in", d[2]), P(3, "D1", "in", d[1]), P(4, "D0", "in", d[0]),
+        P(5, "Y", "out", y), P(6, "W", "out", 1 - y), P(7, "G", "in", 0, true), P(8, "GND", "pwr"),
+        P(9, "C", "in", s[0]), P(10, "B", "in", s[1]), P(11, "A", "in", s[2]), P(12, "D7", "in", d[7]),
+        P(13, "D6", "in", d[6]), P(14, "D5", "in", d[5]), P(15, "D4", "in", d[4]), P(16, "VCC", "pwr")
+      ], note: "S2 goes to C (pin 9), S1 to B (pin 10) and S0 to A (pin 11). Tie the strobe G (pin 7) to GND to enable it. W is the inverted output." };
+    }
+    const pinSpecs = { mux41: pinSpecMux41, demux14: pinSpecDemux14, decoder38: pinSpecDecoder38, encoder83: pinSpecEncoder83, mux81: pinSpecMux81 };
+    function renderPinout(ck) {
+      const box = document.getElementById(`pins-${ck}`);
+      if (!box) return;
+      const spec = pinSpecs[ck]();
+      box.innerHTML = pinoutSVG(spec) + `<div class="pin-note">${spec.note}</div>`;
+    }
+
+    /* ==========================================================================
+       4d. K-MAP GROUP LOOPS
+       state.loops[circuit] lists groups as { rows:[...], cols:[...], color:n } using
+       0-based indexes of the map's data rows and columns. A group that wraps around
+       an edge (for example rows 0 and 3) is drawn as two loops of the same colour.
+       ========================================================================== */
+    state.loops = {};
+    const LOOP_COLORS = ["#C6FF4D", "#5BC0FF", "#F4F7FB", "#FF9F6B"];
+    function idxRuns(list) {
+      const a = [...list].sort((x, y) => x - y), out = [];
+      a.forEach(v => {
+        const last = out[out.length - 1];
+        if (last && v === last[last.length - 1] + 1) last.push(v); else out.push([v]);
+      });
+      return out;
+    }
+    function drawLoops(ck) {
+      const cont = document.getElementById(`kmap-${ck}`);
+      if (!cont) return;
+      const table = cont.querySelector("table.kmap-grid");
+      if (!table || !table.offsetParent) return;          // hidden tab: drawn when it is shown
+      let stage = table.parentElement;
+      if (!stage.classList.contains("kmap-stage")) {
+        stage = document.createElement("div");
+        stage.className = "kmap-stage";
+        table.parentElement.insertBefore(stage, table);
+        stage.appendChild(table);
+      }
+      stage.querySelectorAll(".kloop").forEach(n => n.remove());
+      const sr = stage.getBoundingClientRect();
+      (state.loops[ck] || []).forEach((g, gi) => {
+        const inset = g.nest ? 2 + (gi % 4) * 3 : 3;   // overlapping groups are nested so each outline stays visible
+        idxRuns(g.rows).forEach(R => idxRuns(g.cols).forEach(C => {
+          const a = table.rows[R[0] + 1].cells[C[0] + 1].getBoundingClientRect();
+          const b = table.rows[R[R.length - 1] + 1].cells[C[C.length - 1] + 1].getBoundingClientRect();
+          const el = document.createElement("div");
+          el.className = "kloop";
+          el.style.cssText = `left:${a.left - sr.left + inset}px;top:${a.top - sr.top + inset}px;width:${b.right - a.left - 2 * inset}px;height:${b.bottom - a.top - 2 * inset}px;--lc:${LOOP_COLORS[g.color % 4]}`;
+          stage.appendChild(el);
+        }));
+      });
+    }
+    window.addEventListener("resize", () => drawLoops(state.activeTab));
+
+    /* ==========================================================================
+       4e. PART INFO, SCOREBOARD, DIAGRAM VIEW SWITCH AND ENLARGE DIALOG
+       ========================================================================== */
+    const PART_INFO = {
+      mux41:     { name: "4:1 MUX",     ic: "74153", blockIc: "IC 74153" },
+      demux14:   { name: "1:4 DEMUX",   ic: "74139", blockIc: "IC 74139" },
+      decoder38: { name: "3:8 Decoder", ic: "74138", blockIc: "IC 74138" },
+      encoder83: { name: "8:3 Encoder", ic: "74148", blockIc: "IC 74148" },
+      mux81:     { name: "8:1 MUX",     ic: "74151", blockIc: "IC 74153 + 74157" }
+    };
+    state.lowerView = {};
+    CIRCUIT_KEYS.forEach(k => { state.lowerView[k] = "gates"; });
+
+    function renderBoards() {
+      const rows = CIRCUIT_KEYS.map(k => {
+        const sc = state.score[k], info = PART_INFO[k];
+        return `<button class="board-row ${k === state.activeTab ? "current" : ""}" onclick="switchTab('${k}')">
+          <span class="board-name">${info.name}<small>${info.ic}</small></span>
+          <span class="board-pts">${sc.points}</span>
+          <span class="board-sub">solved ${sc.solved} · skipped ${sc.skipped}</span>
+        </button>`;
+      }).join("");
+      CIRCUIT_KEYS.forEach(k => {
+        const box = document.getElementById(`board-${k}`);
+        if (box) box.innerHTML = rows;
+        const tot = document.getElementById(`board-total-${k}`);
+        if (tot) tot.textContent = totalPoints();
+      });
+    }
+
+    function applyLowerView(ck) {
+      const v = state.lowerView[ck];
+      document.getElementById(`gates-${ck}`).hidden = v !== "gates";
+      document.getElementById(`pins-${ck}`).hidden = v !== "pins";
+      document.getElementById(`seg-gates-${ck}`).classList.toggle("active", v === "gates");
+      document.getElementById(`seg-pins-${ck}`).classList.toggle("active", v === "pins");
+    }
+    function setLowerView(ck, v) { state.lowerView[ck] = v; applyLowerView(ck); }
+
+    function openZoom(ck) {
+      const v = state.lowerView[ck];
+      const src = document.getElementById(`${v === "gates" ? "gates" : "pins"}-${ck}`);
+      const info = PART_INFO[ck];
+      document.getElementById("zoom-root").innerHTML = `
+        <div class="zoom-modal" onclick="if (event.target === this) closeZoom()">
+          <div class="zoom-card" role="dialog" aria-label="Enlarged diagram">
+            <div class="zoom-head">
+              <span>${info.name} · ${v === "gates" ? "gate-level diagram" : "IC pin-out"} · IC ${info.ic}</span>
+              <button class="action-btn" onclick="closeZoom()">Close</button>
+            </div>
+            <div class="zoom-body">${src.innerHTML}</div>
+          </div>
+        </div>`;
+    }
+    function closeZoom() { document.getElementById("zoom-root").innerHTML = ""; }
+    document.addEventListener("keydown", e => { if (e.key === "Escape") closeZoom(); });
+
+    /* ==========================================================================
+       5. VIEW RENDERING (Schematics, Proofs, Truth Tables, K-Maps)
+       ========================================================================== */
+
+    function buildAppDOM() {
+      const container = document.getElementById("main-container");
+      const circuits = ["mux41", "demux14", "decoder38", "encoder83", "mux81"];
+
+      circuits.forEach(ck => {
+        const panel = document.createElement("section");
+        panel.id = `panel-${ck}`;
+        panel.className = `circuit-panel ${ck === state.activeTab ? 'active' : ''}`;
+        const info = PART_INFO[ck];
+        panel.innerHTML = `
+          <div class="col col-mission">
+            <section class="card mission">
+              <div class="card-header">
+                <span class="card-title">Mission</span>
+                <span class="ic-badge">${info.name}</span>
+              </div>
+              <div class="mission-text" id="chal-target-${ck}">Loading challenge...</div>
+              <span class="challenge-status pending" id="chal-status-${ck}">○ In progress</span>
+              <div class="chal-note" id="chal-note-${ck}" hidden></div>
+              <div class="mission-actions">
+                <button class="action-btn ghost" id="chal-hint-${ck}" onclick="showHint('${ck}')">Hint</button>
+                <button class="action-btn" id="chal-next-${ck}" onclick="newChallenge('${ck}', true)">Skip / New challenge</button>
+              </div>
+              <div class="score-strip" id="chal-score-${ck}"></div>
+            </section>
+            <section class="card board">
+              <div class="card-header"><span class="card-title">Scores by part</span></div>
+              <div class="board-rows" id="board-${ck}"></div>
+              <div class="board-total"><span>Total</span><b id="board-total-${ck}">0</b></div>
+            </section>
+          </div>
+
+          <div class="col">
+            <section class="card schem">
+              <div class="card-header">
+                <span class="card-title">Schematic &amp; inputs</span>
+                <span class="head-right">
+                  <span class="legend"><i class="hi"></i>1 <i class="lo"></i>0</span>
+                  <span class="ic-badge">${info.blockIc}</span>
+                </span>
+              </div>
+              <div class="controls-strip" id="controls-${ck}"></div>
+              <div class="schematic-box" id="schematic-${ck}"></div>
+            </section>
+            <section class="card truth">
+              <div class="card-header"><span class="card-title">Truth table</span></div>
+              <div class="table-container"><table class="truth-table" id="table-${ck}"></table></div>
+            </section>
+          </div>
+
+          <div class="col">
+            <section class="card kmapcard">
+              <div class="card-header"><span class="card-title">K-map</span></div>
+              <div class="kmap-section" id="kmap-${ck}"></div>
+            </section>
+            <section class="card lower">
+              <div class="card-header">
+                <div class="seg" role="group" aria-label="Diagram view">
+                  <button class="seg-btn" id="seg-gates-${ck}" onclick="setLowerView('${ck}', 'gates')">Gate-level</button>
+                  <button class="seg-btn" id="seg-pins-${ck}" onclick="setLowerView('${ck}', 'pins')">IC pin-out</button>
+                </div>
+                <span class="head-right">
+                  <span class="ic-badge">IC ${info.ic}</span>
+                  <button class="zoom-btn" onclick="openZoom('${ck}')" title="Open this diagram in a larger window">Enlarge</button>
+                </span>
+              </div>
+              <div class="lower-body">
+                <div class="view gate-scroll" id="gates-${ck}"></div>
+                <div class="view pin-scroll" id="pins-${ck}" hidden></div>
+              </div>
+            </section>
+          </div>
+        `;
+        container.appendChild(panel);
+        applyLowerView(ck);
+      });
+    }
+
+    /* --- UI UPDATE: 4:1 MULTIPLEXER --- */
+    function renderMux41() {
+      const { d, s } = state.switches.mux41;
+      const sel = (s[0] << 1) | s[1];
+      const y = muxOut(d, s);
+
+      // Controls
+      document.getElementById("controls-mux41").innerHTML = `
+        <div class="switch-group">
+          <span class="switch-group-label">Data Inputs</span>
+          <div class="switches-bank">
+            ${[0,1,2,3].map(i => `
+              <button class="bit-toggle ${d[i] ? 'high' : ''}" onclick="toggleSw('mux41', 'd', ${i})">
+                <span class="pin-name">D${i}</span><span class="pin-val">${d[i]}</span>
+              </button>
+            `).join("")}
+          </div>
+        </div>
+        <div class="switch-group">
+          <span class="switch-group-label">Select Lines</span>
+          <div class="switches-bank">
+            <button class="bit-toggle ${s[0] ? 'high' : ''}" onclick="toggleSw('mux41', 's', 0)">
+              <span class="pin-name">S1</span><span class="pin-val">${s[0]}</span>
+            </button>
+            <button class="bit-toggle ${s[1] ? 'high' : ''}" onclick="toggleSw('mux41', 's', 1)">
+              <span class="pin-name">S0</span><span class="pin-val">${s[1]}</span>
+            </button>
+          </div>
+        </div>
+      `;
+
+      // Schematic
+      document.getElementById("schematic-mux41").innerHTML = `
+        <svg class="circuit-svg" viewBox="0 0 520 310">
+          ${[0,1,2,3].map(i => `
+            <line x1="40" y1="${40 + i * 45}" x2="210" y2="${40 + i * 45}" class="wire ${d[i] ? 'high' : ''}" />
+            <text x="20" y="${44 + i * 45}" class="wire-label ${d[i] ? 'high' : ''}">D${i}</text>
+          `).join("")}
+          <!-- Select lines enter the bottom edge of the MUX -->
+          <line x1="245" y1="290" x2="245" y2="227.5" class="wire ${s[1] ? 'high' : ''}" />
+          <circle cx="245" cy="227.5" r="3.5" fill="${s[1] ? 'var(--logic-high)' : 'var(--logic-low)'}" />
+          <text x="245" y="306" text-anchor="middle" class="wire-label ${s[1] ? 'high' : ''}">S0=${s[1]}</text>
+          <line x1="285" y1="290" x2="285" y2="212.7" class="wire ${s[0] ? 'high' : ''}" />
+          <circle cx="285" cy="212.7" r="3.5" fill="${s[0] ? 'var(--logic-high)' : 'var(--logic-low)'}" />
+          <text x="285" y="306" text-anchor="middle" class="wire-label ${s[0] ? 'high' : ''}">S1=${s[0]}</text>
+
+          <polygon points="210,20 320,60 320,200 210,240" class="gate-body ${y ? 'active-block' : ''}" />
+          <text x="265" y="120" class="gate-title">4:1 MUX</text>
+          <text x="265" y="140" class="gate-sub">Data Selector</text>
+          <text x="265" y="158" class="gate-ic">IC 74153</text>
+
+          <!-- Visible Internal Active Route -->
+          <line x1="210" y1="${40 + sel * 45}" x2="320" y2="130" stroke="${d[sel] ? 'var(--logic-high)' : 'var(--logic-low)'}" stroke-width="3" stroke-dasharray="4,3" />
+
+          <line x1="320" y1="130" x2="430" y2="130" class="wire ${y ? 'high' : ''}" />
+          <circle cx="445" cy="130" class="led-node ${y ? 'lit' : ''}" />
+          <text x="465" y="135" class="wire-label ${y ? 'high' : ''}">Y = ${y}</text>
+        </svg>
+      `;
+
+      // Truth table
+      const tableRows = [
+        [0, 0, "D0", d[0]],
+        [0, 1, "D1", d[1]],
+        [1, 0, "D2", d[2]],
+        [1, 1, "D3", d[3]]
+      ];
+      document.getElementById("table-mux41").innerHTML = `
+        <thead><tr><th>S1</th><th>S0</th><th>Selected Input</th><th>Output Y</th></tr></thead>
+        <tbody>
+          ${tableRows.map((r, i) => `
+            <tr class="${i === sel ? 'active-row' : ''}">
+              <td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      `;
+
+      // K-Map: Map-entered variable over S1 S0
+      document.getElementById("kmap-mux41").innerHTML = `
+        <div class="kmap-toolbar">
+          <span class="kmap-title">Map-Entered-Variable K-Map (S1, S0)</span>
+          <span style="font-size:0.75rem; color:var(--text-muted);">Cell content = Selected Data Input</span>
+        </div>
+        <div class="kmap-grid-wrap">
+          <table class="kmap-grid">
+            <tr><th>S1 \ S0</th><th>0</th><th>1</th></tr>
+            <tr>
+              <th>0</th>
+              <td class="kmap-cell ${sel === 0 ? 'active-cell' : ''}">D0 (${d[0]})</td>
+              <td class="kmap-cell ${sel === 1 ? 'active-cell' : ''}">D1 (${d[1]})</td>
+            </tr>
+            <tr>
+              <th>1</th>
+              <td class="kmap-cell ${sel === 2 ? 'active-cell' : ''}">D2 (${d[2]})</td>
+              <td class="kmap-cell ${sel === 3 ? 'active-cell' : ''}">D3 (${d[3]})</td>
+            </tr>
+          </table>
+        </div>
+        <div style="font-size:0.8rem; margin-top:4px;">
+          <strong>Groups &amp; Expression:</strong> Each cell is an isolated product minterm:
+          <span class="kmap-group-tag group-orange">S1'S0'D0</span> + <span class="kmap-group-tag group-blue">S1'S0D1</span> + <span class="kmap-group-tag group-green">S1S0'D2</span> + <span class="kmap-group-tag group-purple">S1S0D3</span>
+        </div>
+      `;
+
+      state.loops.mux41 = [
+        { rows: [0], cols: [0], color: 0 }, { rows: [0], cols: [1], color: 1 },
+        { rows: [1], cols: [0], color: 2 }, { rows: [1], cols: [1], color: 3 }
+      ];
+      renderGateDiagram("mux41");
+      updateChallengeUI("mux41");
+    }
+
+    /* --- UI UPDATE: 1:4 DEMULTIPLEXER --- */
+    function renderDemux14() {
+      const { din, s } = state.switches.demux14;
+      const sel = (s[0] << 1) | s[1];
+      const y = demuxOut(din, s);
+      const viewOut = state.kmapView.demux14;
+
+      document.getElementById("controls-demux14").innerHTML = `
+        <div class="switch-group">
+          <span class="switch-group-label">Data Input</span>
+          <div class="switches-bank">
+            <button class="bit-toggle ${din ? 'high' : ''}" onclick="toggleSw('demux14', 'din')">
+              <span class="pin-name">Din</span><span class="pin-val">${din}</span>
+            </button>
+          </div>
+        </div>
+        <div class="switch-group">
+          <span class="switch-group-label">Select Lines</span>
+          <div class="switches-bank">
+            <button class="bit-toggle ${s[0] ? 'high' : ''}" onclick="toggleSw('demux14', 's', 0)">
+              <span class="pin-name">S1</span><span class="pin-val">${s[0]}</span>
+            </button>
+            <button class="bit-toggle ${s[1] ? 'high' : ''}" onclick="toggleSw('demux14', 's', 1)">
+              <span class="pin-name">S0</span><span class="pin-val">${s[1]}</span>
+            </button>
+          </div>
+        </div>
+      `;
+
+      document.getElementById("schematic-demux14").innerHTML = `
+        <svg class="circuit-svg" viewBox="0 0 520 310">
+          <line x1="90" y1="120" x2="200" y2="120" class="wire ${din ? 'high' : ''}" />
+          <text x="15" y="125" class="wire-label ${din ? 'high' : ''}">Din = ${din}</text>
+          <!-- Select lines enter the bottom edge of the DEMUX -->
+          <line x1="245" y1="290" x2="245" y2="216.4" class="wire ${s[1] ? 'high' : ''}" />
+          <circle cx="245" cy="216.4" r="3.5" fill="${s[1] ? 'var(--logic-high)' : 'var(--logic-low)'}" />
+          <text x="245" y="306" text-anchor="middle" class="wire-label ${s[1] ? 'high' : ''}">S0=${s[1]}</text>
+          <line x1="285" y1="290" x2="285" y2="230.9" class="wire ${s[0] ? 'high' : ''}" />
+          <circle cx="285" cy="230.9" r="3.5" fill="${s[0] ? 'var(--logic-high)' : 'var(--logic-low)'}" />
+          <text x="285" y="306" text-anchor="middle" class="wire-label ${s[0] ? 'high' : ''}">S1=${s[0]}</text>
+
+          <polygon points="200,60 310,20 310,240 200,200" class="gate-body ${din ? 'active-block' : ''}" />
+          <text x="255" y="120" class="gate-title">1:4 DEMUX</text>
+          <text x="255" y="140" class="gate-sub">Data Distributor</text>
+          <text x="255" y="158" class="gate-ic">IC 74139</text>
+
+          <!-- Visible Internal Route -->
+          <line x1="200" y1="120" x2="310" y2="${45 + sel * 50}" stroke="${din ? 'var(--logic-high)' : 'var(--logic-low)'}" stroke-width="3" stroke-dasharray="4,3" />
+
+          ${[0,1,2,3].map(i => `
+            <line x1="310" y1="${45 + i * 50}" x2="430" y2="${45 + i * 50}" class="wire ${y[i] ? 'high' : ''}" />
+            <circle cx="445" cy="${45 + i * 50}" class="led-node ${y[i] ? 'lit' : ''}" />
+            <text x="465" y="${50 + i * 50}" class="wire-label ${y[i] ? 'high' : ''}">Y${i} = ${y[i]}</text>
+          `).join("")}
+        </svg>
+      `;
+
+      const eqList = [
+        { name: "Y0", term: "S1'S0'D", val: y[0] },
+        { name: "Y1", term: "S1'S0 D", val: y[1] },
+        { name: "Y2", term: "S1 S0'D", val: y[2] },
+        { name: "Y3", term: "S1 S0 D", val: y[3] }
+      ];
+
+      document.getElementById("table-demux14").innerHTML = `
+        <thead><tr><th>S1</th><th>S0</th><th>Y0</th><th>Y1</th><th>Y2</th><th>Y3</th></tr></thead>
+        <tbody>
+          ${[0,1,2,3].map(i => `
+            <tr class="${i === sel ? 'active-row' : ''}">
+              <td>${(i >> 1) & 1}</td><td>${i & 1}</td>
+              <td>${i === 0 ? din : 0}</td>
+              <td>${i === 1 ? din : 0}</td>
+              <td>${i === 2 ? din : 0}</td>
+              <td>${i === 3 ? din : 0}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      `;
+
+      document.getElementById("kmap-demux14").innerHTML = `
+        <div class="kmap-toolbar">
+          <span class="kmap-title">K-Map for Output Y${viewOut}</span>
+          <select class="kmap-select" onchange="state.kmapView.demux14 = parseInt(this.value, 10); renderDemux14();">
+            ${[0,1,2,3].map(i => `<option value="${i}" ${viewOut === i ? 'selected' : ''}>View K-Map: Y${i}</option>`).join("")}
+          </select>
+        </div>
+        <div class="kmap-grid-wrap">
+          <table class="kmap-grid">
+            <tr><th>S1 \ S0</th><th>0</th><th>1</th></tr>
+            <tr>
+              <th>0</th>
+              <td class="kmap-cell ${viewOut === 0 ? (sel === 0 ? 'active-cell' : '') : ''}">${viewOut === 0 ? `D (${din})` : '0'}</td>
+              <td class="kmap-cell ${viewOut === 1 ? (sel === 1 ? 'active-cell' : '') : ''}">${viewOut === 1 ? `D (${din})` : '0'}</td>
+            </tr>
+            <tr>
+              <th>1</th>
+              <td class="kmap-cell ${viewOut === 2 ? (sel === 2 ? 'active-cell' : '') : ''}">${viewOut === 2 ? `D (${din})` : '0'}</td>
+              <td class="kmap-cell ${viewOut === 3 ? (sel === 3 ? 'active-cell' : '') : ''}">${viewOut === 3 ? `D (${din})` : '0'}</td>
+            </tr>
+          </table>
+        </div>
+        <div style="font-size:0.8rem; margin-top:4px;">
+          <strong>Group Outlines:</strong> Single cell group = <span class="kmap-group-tag group-orange">${eqList[viewOut].term}</span>
+        </div>
+      `;
+
+      state.loops.demux14 = [{ rows: [viewOut >> 1], cols: [viewOut & 1], color: 0 }];
+      renderGateDiagram("demux14");
+      updateChallengeUI("demux14");
+    }
+
+    /* --- UI UPDATE: 3:8 DECODER --- */
+    function renderDecoder38() {
+      const { en, abc } = state.switches.decoder38;
+      const idx = (abc[0] << 2) | (abc[1] << 1) | abc[2];
+      const y = decoderOut(abc, en);
+      const viewOut = state.kmapView.decoder38;
+
+      document.getElementById("controls-decoder38").innerHTML = `
+        <div class="switch-group">
+          <span class="switch-group-label">Enable</span>
+          <div class="switches-bank">
+            <button class="bit-toggle ${en ? 'high' : ''}" onclick="toggleSw('decoder38', 'en')">
+              <span class="pin-name">EN</span><span class="pin-val">${en}</span>
+            </button>
+          </div>
+        </div>
+        <div class="switch-group">
+          <span class="switch-group-label">Binary Address Inputs (A B C)</span>
+          <div class="switches-bank">
+            <button class="bit-toggle ${abc[0] ? 'high' : ''}" onclick="toggleSw('decoder38', 'abc', 0)">
+              <span class="pin-name">A</span><span class="pin-val">${abc[0]}</span>
+            </button>
+            <button class="bit-toggle ${abc[1] ? 'high' : ''}" onclick="toggleSw('decoder38', 'abc', 1)">
+              <span class="pin-name">B</span><span class="pin-val">${abc[1]}</span>
+            </button>
+            <button class="bit-toggle ${abc[2] ? 'high' : ''}" onclick="toggleSw('decoder38', 'abc', 2)">
+              <span class="pin-name">C</span><span class="pin-val">${abc[2]}</span>
+            </button>
+          </div>
+        </div>
+      `;
+
+      document.getElementById("schematic-decoder38").innerHTML = `
+        <svg class="circuit-svg" viewBox="0 0 540 280">
+          <line x1="62" y1="35" x2="190" y2="35" class="wire ${en ? 'high' : ''}" />
+          <text x="10" y="39" class="wire-label ${en ? 'high' : ''}">EN=${en}</text>
+          <line x1="62" y1="95" x2="190" y2="95" class="wire ${abc[0] ? 'high' : ''}" />
+          <text x="10" y="99" class="wire-label ${abc[0] ? 'high' : ''}">A=${abc[0]}</text>
+          <line x1="62" y1="150" x2="190" y2="150" class="wire ${abc[1] ? 'high' : ''}" />
+          <text x="10" y="154" class="wire-label ${abc[1] ? 'high' : ''}">B=${abc[1]}</text>
+          <line x1="62" y1="205" x2="190" y2="205" class="wire ${abc[2] ? 'high' : ''}" />
+          <text x="10" y="209" class="wire-label ${abc[2] ? 'high' : ''}">C=${abc[2]}</text>
+
+          <rect x="190" y="20" width="140" height="240" class="gate-body ${en ? 'active-block' : ''}" />
+          <text x="260" y="130" class="gate-title">3:8 DECODER</text>
+          <text x="260" y="150" class="gate-sub">Minterm Generator</text>
+          <text x="260" y="168" class="gate-ic">IC 74138</text>
+
+          ${[0,1,2,3,4,5,6,7].map(i => `
+            <line x1="330" y1="${32 + i * 30}" x2="440" y2="${32 + i * 30}" class="wire ${y[i] ? 'high' : ''}" />
+            <circle cx="455" cy="${32 + i * 30}" class="led-node ${y[i] ? 'lit' : ''}" />
+            <text x="475" y="${36 + i * 30}" class="wire-label ${y[i] ? 'high' : ''}">Y${i} (m${i})</text>
+          `).join("")}
+        </svg>
+      `;
+
+      const mintermStr = `${abc[0] ? 'A' : "A'"}·${abc[1] ? 'B' : "B'"}·${abc[2] ? 'C' : "C'"}`;
+      const decRows = [0,1,2,3,4,5,6,7].map(i => [
+        en, (i >> 2) & 1, (i >> 1) & 1, i & 1, `m${i}`, (en && i === idx) ? 1 : 0
+      ]);
+      document.getElementById("table-decoder38").innerHTML = `
+        <thead><tr><th>EN</th><th>A</th><th>B</th><th>C</th><th>Minterm</th><th>Output</th></tr></thead>
+        <tbody>
+          ${decRows.map((r, i) => `
+            <tr class="${(en && i === idx) ? 'active-row' : ''}">
+              <td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td><td>${r[4]}</td><td>${r[5]}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      `;
+
+      // 3-variable K-map (A row, BC cols: 00, 01, 11, 10)
+      const kCols = [0, 1, 3, 2];
+      document.getElementById("kmap-decoder38").innerHTML = `
+        <div class="kmap-toolbar">
+          <span class="kmap-title">3-Variable K-Map for Output Y${viewOut}</span>
+          <select class="kmap-select" onchange="state.kmapView.decoder38 = parseInt(this.value, 10); renderDecoder38();">
+            ${[0,1,2,3,4,5,6,7].map(i => `<option value="${i}" ${viewOut === i ? 'selected' : ''}>View K-Map: Y${i} (m${i})</option>`).join("")}
+          </select>
+        </div>
+        <div class="kmap-grid-wrap">
+          <table class="kmap-grid">
+            <tr><th>A \ BC</th><th>00</th><th>01</th><th>11</th><th>10</th></tr>
+            ${[0, 1].map(rowA => `
+              <tr>
+                <th>${rowA}</th>
+                ${kCols.map(colBC => {
+                  const cellIdx = (rowA << 2) | colBC;
+                  const isCellOne = cellIdx === viewOut;
+                  const isCellCur = en && (cellIdx === idx);
+                  return `<td class="kmap-cell ${isCellCur ? 'active-cell' : ''}">${isCellOne ? (en ? '1' : 'E') : '0'}</td>`;
+                }).join("")}
+              </tr>
+            `).join("")}
+          </table>
+        </div>
+        <div style="font-size:0.8rem; margin-top:4px;">
+          <strong>Groups &amp; Expression:</strong> Isolated minterm cell: <span class="kmap-group-tag group-orange">Y${viewOut} = E · m${viewOut}</span>
+        </div>
+      `;
+
+      state.loops.decoder38 = [{ rows: [viewOut >> 2], cols: [kCols.indexOf(viewOut & 3)], color: 0 }];
+      renderGateDiagram("decoder38");
+      updateChallengeUI("decoder38");
+    }
+
+    /* --- UI UPDATE: 8:3 PRIORITY ENCODER --- */
+    function renderEncoder83() {
+      const { inputs, priority } = state.switches.encoder83;
+      const res = encoderOut(inputs, priority);
+      const viewKey = state.kmapView.encoder83;
+
+      document.getElementById("controls-encoder83").innerHTML = `
+        <div class="switch-group" style="width:100%;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+            <span class="switch-group-label">Input Switches (I0 to I7)</span>
+            <label class="mode-toggle-pill">
+              <input type="checkbox" ${priority ? 'checked' : ''} onchange="state.switches.encoder83.priority = this.checked; renderEncoder83();" />
+              <span>Priority Resolver: ${priority ? 'ACTIVE' : 'OFF (Naive OR)'}</span>
+            </label>
+          </div>
+          <div class="switches-bank">
+            ${[0,1,2,3,4,5,6,7].map(i => `
+              <button class="bit-toggle ${inputs[i] ? 'high' : ''}" onclick="toggleSw('encoder83', 'inputs', ${i})">
+                <span class="pin-name">I${i}</span><span class="pin-val">${inputs[i]}</span>
+              </button>
+            `).join("")}
+          </div>
+        </div>
+      `;
+
+      document.getElementById("schematic-encoder83").innerHTML = `
+        <svg class="circuit-svg" viewBox="0 0 540 280">
+          ${[0,1,2,3,4,5,6,7].map(i => `
+            <line x1="30" y1="${25 + i * 32}" x2="190" y2="${25 + i * 32}" class="wire ${inputs[i] ? 'high' : ''}" />
+            <text x="10" y="${29 + i * 32}" class="wire-label ${inputs[i] ? 'high' : ''}">I${i}</text>
+          `).join("")}
+
+          <rect x="190" y="20" width="140" height="240" class="gate-body ${res.valid ? 'active-block' : ''}" />
+          <text x="260" y="130" class="gate-title">8:3 ENCODER</text>
+          <text x="260" y="150" class="gate-sub">${priority ? 'Priority Logic' : 'Naive OR Matrix'}</text>
+          <text x="260" y="168" class="gate-ic">IC 74148</text>
+
+          <line x1="330" y1="55" x2="430" y2="55" class="wire ${res.a2 ? 'high' : ''}" />
+          <circle cx="445" cy="55" class="led-node ${res.a2 ? 'lit' : ''}" />
+          <text x="465" y="60" class="wire-label ${res.a2 ? 'high' : ''}">A2=${res.a2}</text>
+
+          <line x1="330" y1="110" x2="430" y2="110" class="wire ${res.a1 ? 'high' : ''}" />
+          <circle cx="445" cy="110" class="led-node ${res.a1 ? 'lit' : ''}" />
+          <text x="465" y="115" class="wire-label ${res.a1 ? 'high' : ''}">A1=${res.a1}</text>
+
+          <line x1="330" y1="165" x2="430" y2="165" class="wire ${res.a0 ? 'high' : ''}" />
+          <circle cx="445" cy="165" class="led-node ${res.a0 ? 'lit' : ''}" />
+          <text x="465" y="170" class="wire-label ${res.a0 ? 'high' : ''}">A0=${res.a0}</text>
+
+          <line x1="330" y1="225" x2="430" y2="225" class="wire ${res.valid ? 'high' : ''}" />
+          <circle cx="445" cy="225" class="led-node ${res.valid ? 'lit' : ''}" />
+          <text x="465" y="230" class="wire-label ${res.valid ? 'high' : ''}">Valid=${res.valid}</text>
+        </svg>
+      `;
+
+      const encRows = [
+        ["None", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        ["I0", 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1],
+        ["I1", 0, 0, 0, 0, 0, 0, 1, "X", 0, 0, 1, 1],
+        ["I2", 0, 0, 0, 0, 0, 1, "X", "X", 0, 1, 0, 1],
+        ["I3", 0, 0, 0, 0, 1, "X", "X", "X", 0, 1, 1, 1],
+        ["I4", 0, 0, 0, 1, "X", "X", "X", "X", 1, 0, 0, 1],
+        ["I5", 0, 0, 1, "X", "X", "X", "X", "X", 1, 0, 1, 1],
+        ["I6", 0, 1, "X", "X", "X", "X", "X", "X", 1, 1, 0, 1],
+        ["I7", 1, "X", "X", "X", "X", "X", "X", "X", 1, 1, 1, 1]
+      ];
+      const curRow = res.winner === -1 ? 0 : (res.winner === 99 ? -1 : res.winner + 1);
+      document.getElementById("table-encoder83").innerHTML = `
+        <thead><tr><th>Active</th><th>I7</th><th>I6</th><th>I5</th><th>I4</th><th>I3</th><th>I2</th><th>I1</th><th>I0</th><th>A2</th><th>A1</th><th>A0</th><th>V</th></tr></thead>
+        <tbody>
+          ${encRows.map((r, i) => `
+            <tr class="${i === curRow ? 'active-row' : ''}">
+              ${r.map(c => `<td>${c}</td>`).join("")}
+            </tr>
+          `).join("")}
+        </tbody>
+      `;
+
+      // 4-variable K-map with don't-cares for 4:2 priority encoder (I3 I2 rows, I1 I0 cols)
+      const kGridRows = [0, 1, 3, 2]; // 00, 01, 11, 10
+      const kGridCols = [0, 1, 3, 2];
+      document.getElementById("kmap-encoder83").innerHTML = `
+        <div class="kmap-toolbar">
+          <span class="kmap-title">${viewKey === 'A2' ? '4-Variable K-Map (I7,I6,I5,I4 for A2)' : `4-Variable K-Map (I3,I2,I1,I0 Priority Core for ${viewKey})`}</span>
+          <select class="kmap-select" onchange="state.kmapView.encoder83 = this.value; renderEncoder83();">
+            <option value="A2" ${viewKey === 'A2' ? 'selected' : ''}>K-Map for A2</option>
+            <option value="A1" ${viewKey === 'A1' ? 'selected' : ''}>K-Map for A1</option>
+            <option value="A0" ${viewKey === 'A0' ? 'selected' : ''}>K-Map for A0</option>
+          </select>
+        </div>
+        <div class="kmap-grid-wrap">
+          <table class="kmap-grid">
+            <tr><th>${viewKey === 'A2' ? 'I7 I6 \\ I5 I4' : 'I3 I2 \\ I1 I0'}</th><th>00</th><th>01</th><th>11</th><th>10</th></tr>
+            ${kGridRows.map(rVal => {
+              const i3 = (rVal >> 1) & 1, i2 = rVal & 1;
+              return `
+                <tr>
+                  <th>${i3}${i2}</th>
+                  ${kGridCols.map(cVal => {
+                    const i1 = (cVal >> 1) & 1, i0 = cVal & 1;
+                    let cellVal = "0";
+                    if (viewKey === "A2") {
+                      // A2 = I7 + I6 + I5 + I4 (rows = I7 I6, columns = I5 I4)
+                      cellVal = (i3 || i2 || i1 || i0) ? "1" : "0";
+                    } else if (i3 === 0 && i2 === 0 && i1 === 0 && i0 === 0) {
+                      cellVal = "X";
+                    } else if (i3 === 1) {
+                      cellVal = "1";
+                    } else if (i2 === 1) {
+                      cellVal = viewKey === "A1" ? "1" : "0";
+                    } else if (i1 === 1) {
+                      cellVal = viewKey === "A1" ? "0" : "1";
+                    } else {
+                      cellVal = "0";
+                    }
+                    const isCur = viewKey === "A2"
+                      ? (inputs[7] === i3 && inputs[6] === i2 && inputs[5] === i1 && inputs[4] === i0)
+                      : (inputs[3] === i3 && inputs[2] === i2 && inputs[1] === i1 && inputs[0] === i0);
+                    return `<td class="kmap-cell ${isCur ? 'active-cell' : ''}">${cellVal}</td>`;
+                  }).join("")}
+                </tr>
+              `;
+            }).join("")}
+          </table>
+        </div>
+        <div style="font-size:0.8rem; margin-top:4px;">
+          <strong>Groups &amp; Scaling:</strong>
+          <span id="kmap-groups-encoder83"></span>.
+          ${viewKey === 'A2' ? 'Every cell is 1 except 0000, so the map collapses to a single OR of the four upper inputs. The lower inputs I3 to I0 do not affect A2.' : 'The 8:3 priority encoder follows this identical cascading structure across 8 inputs.'}
+        </div>
+      `;
+
+      // Row/column order on these maps is 00, 01, 11, 10 (index 0..3)
+      const tag = (txt, c) => `<span class="kmap-group-tag group-${c}">${txt}</span>`;
+      let groupHTML;
+      if (viewKey === "A2") {
+        state.loops.encoder83 = [
+          { rows: [2, 3], cols: [0, 1, 2, 3], color: 0, nest: true }, { rows: [1, 2], cols: [0, 1, 2, 3], color: 1, nest: true },
+          { rows: [0, 1, 2, 3], cols: [2, 3], color: 2, nest: true }, { rows: [0, 1, 2, 3], cols: [1, 2], color: 3, nest: true }
+        ];
+        groupHTML = `${tag("I7", "orange")} + ${tag("I6", "blue")} + ${tag("I5", "green")} + ${tag("I4", "purple")}`;
+      } else if (viewKey === "A1") {
+        state.loops.encoder83 = [
+          { rows: [2, 3], cols: [0, 1, 2, 3], color: 0, nest: true }, { rows: [1, 2], cols: [0, 1, 2, 3], color: 1, nest: true }
+        ];
+        groupHTML = `A1 = ${tag("I3", "orange")} + ${tag("I2", "blue")}`;
+      } else {
+        state.loops.encoder83 = [
+          { rows: [2, 3], cols: [0, 1, 2, 3], color: 0, nest: true }, { rows: [0, 3], cols: [2, 3], color: 1, nest: true }
+        ];
+        groupHTML = `A0 = ${tag("I3", "orange")} + ${tag("I2\u2032I1", "blue")} <em>(the blue group wraps from the bottom edge to the top)</em>`;
+      }
+      document.getElementById("kmap-groups-encoder83").innerHTML = groupHTML;
+      renderGateDiagram("encoder83");
+      updateChallengeUI("encoder83");
+    }
+
+    /* --- UI UPDATE: 8:1 MULTIPLEXER (COMPOSITE) --- */
+    function renderMux81() {
+      const { d, s } = state.switches.mux81;
+      const sel = (s[0] << 2) | (s[1] << 1) | s[2];
+      const res = mux8Out(d, s);
+
+      document.getElementById("controls-mux81").innerHTML = `
+        <div class="switch-group">
+          <span class="switch-group-label">Lower Bank Inputs (D0-D3)</span>
+          <div class="switches-bank">
+            ${[0,1,2,3].map(i => `
+              <button class="bit-toggle ${d[i] ? 'high' : ''}" onclick="toggleSw('mux81', 'd', ${i})">
+                <span class="pin-name">D${i}</span><span class="pin-val">${d[i]}</span>
+              </button>
+            `).join("")}
+          </div>
+        </div>
+        <div class="switch-group">
+          <span class="switch-group-label">Upper Bank Inputs (D4-D7)</span>
+          <div class="switches-bank">
+            ${[4,5,6,7].map(i => `
+              <button class="bit-toggle ${d[i] ? 'high' : ''}" onclick="toggleSw('mux81', 'd', ${i})">
+                <span class="pin-name">D${i}</span><span class="pin-val">${d[i]}</span>
+              </button>
+            `).join("")}
+          </div>
+        </div>
+        <div class="switch-group">
+          <span class="switch-group-label">Select Address (S2 S1 S0)</span>
+          <div class="switches-bank">
+            <button class="bit-toggle ${s[0] ? 'high' : ''}" onclick="toggleSw('mux81', 's', 0)">
+              <span class="pin-name">S2</span><span class="pin-val">${s[0]}</span>
+            </button>
+            <button class="bit-toggle ${s[1] ? 'high' : ''}" onclick="toggleSw('mux81', 's', 1)">
+              <span class="pin-name">S1</span><span class="pin-val">${s[1]}</span>
+            </button>
+            <button class="bit-toggle ${s[2] ? 'high' : ''}" onclick="toggleSw('mux81', 's', 2)">
+              <span class="pin-name">S0</span><span class="pin-val">${s[2]}</span>
+            </button>
+          </div>
+        </div>
+      `;
+
+      document.getElementById("schematic-mux81").innerHTML = `
+        <svg class="circuit-svg" viewBox="0 0 560 335">
+          <!-- MUX 0 -->
+          <polygon points="120,25 200,50 200,120 120,145" class="gate-body ${s[0] === 0 ? 'active-block' : ''}" />
+          <text x="160" y="80" class="gate-title" style="font-size:11px;">MUX 0</text>
+          <text x="160" y="95" class="gate-sub">4:1 (D0-D3)</text>
+          <text x="160" y="109" class="gate-ic" style="font-size:8px;">IC 74153 (½)</text>
+
+          <!-- MUX 1 -->
+          <polygon points="120,165 200,190 200,260 120,285" class="gate-body ${s[0] === 1 ? 'active-block' : ''}" />
+          <text x="160" y="220" class="gate-title" style="font-size:11px;">MUX 1</text>
+          <text x="160" y="235" class="gate-sub">4:1 (D4-D7)</text>
+          <text x="160" y="249" class="gate-ic" style="font-size:8px;">IC 74153 (½)</text>
+
+          <!-- Input wires -->
+          ${[0,1,2,3].map(i => `<line x1="34" y1="${40 + i * 28}" x2="120" y2="${40 + i * 28}" class="wire ${d[i] ? 'high' : ''}" /><text x="4" y="${44 + i * 28}" class="wire-label ${d[i] ? 'high' : ''}" style="font-size:10px;">D${i}</text>`).join("")}
+          ${[4,5,6,7].map(i => `<line x1="34" y1="${180 + (i-4) * 28}" x2="120" y2="${180 + (i-4) * 28}" class="wire ${d[i] ? 'high' : ''}" /><text x="4" y="${184 + (i-4) * 28}" class="wire-label ${d[i] ? 'high' : ''}" style="font-size:10px;">D${i}</text>`).join("")}
+
+          <!-- Select lines S1 (x=175) and S0 (x=130) enter the bottom edge of each 4:1 MUX -->
+          <line x1="175" y1="127.8" x2="175" y2="149" class="wire ${s[1] ? 'high' : ''}" />
+          <line x1="130" y1="141.9" x2="130" y2="149" class="wire ${s[2] ? 'high' : ''}" />
+          <text x="175" y="159" text-anchor="middle" class="wire-label ${s[1] ? 'high' : ''}" style="font-size:10px;">S1=${s[1]}</text>
+          <text x="130" y="159" text-anchor="middle" class="wire-label ${s[2] ? 'high' : ''}" style="font-size:10px;">S0=${s[2]}</text>
+          <line x1="175" y1="267.8" x2="175" y2="305" class="wire ${s[1] ? 'high' : ''}" />
+          <line x1="130" y1="281.9" x2="130" y2="305" class="wire ${s[2] ? 'high' : ''}" />
+          <text x="175" y="320" text-anchor="middle" class="wire-label ${s[1] ? 'high' : ''}" style="font-size:10px;">S1=${s[1]}</text>
+          <text x="130" y="320" text-anchor="middle" class="wire-label ${s[2] ? 'high' : ''}" style="font-size:10px;">S0=${s[2]}</text>
+
+          <!-- Intermediate wires -->
+          <path d="M 200 85 L 280 85 L 280 135 L 340 135" class="wire ${(s[0]===0 && res.mux0) ? 'high' : (res.mux0 ? 'high' : '')}" />
+          <path d="M 200 225 L 280 225 L 280 175 L 340 175" class="wire ${(s[0]===1 && res.mux1) ? 'high' : (res.mux1 ? 'high' : '')}" />
+
+          <!-- 2:1 MUX -->
+          <polygon points="340,110 410,130 410,180 340,200" class="gate-body ${res.finalY ? 'active-block' : ''}" />
+          <text x="375" y="150" class="gate-title" style="font-size:11px;">2:1 MUX</text>
+          <text x="375" y="165" class="gate-sub">S2 Selector</text>
+          <text x="375" y="178" class="gate-ic" style="font-size:8px;">IC 74157 (¼)</text>
+
+          <line x1="375" y1="250" x2="375" y2="190" class="wire ${s[0] ? 'high' : ''}" />
+          <text x="365" y="265" class="wire-label ${s[0] ? 'high' : ''}">S2=${s[0]}</text>
+
+          <line x1="410" y1="155" x2="490" y2="155" class="wire ${res.finalY ? 'high' : ''}" />
+          <circle cx="505" cy="155" class="led-node ${res.finalY ? 'lit' : ''}" />
+          <text x="525" y="160" class="wire-label ${res.finalY ? 'high' : ''}">Y = ${res.finalY}</text>
+        </svg>
+      `;
+
+      const mux8Rows = [0,1,2,3,4,5,6,7].map(i => [
+        (i >> 2) & 1, (i >> 1) & 1, i & 1, i < 4 ? "MUX 0" : "MUX 1", `D${i}`, d[i]
+      ]);
+      document.getElementById("table-mux81").innerHTML = `
+        <thead><tr><th>S2</th><th>S1</th><th>S0</th><th>Stage 1 MUX</th><th>Selected Pin</th><th>Output Y</th></tr></thead>
+        <tbody>
+          ${mux8Rows.map((r, i) => `
+            <tr class="${i === sel ? 'active-row' : ''}">
+              <td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td><td>${r[4]}</td><td>${r[5]}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      `;
+
+      // MEV K-Map over S2 S1 S0 (Row S2: 0,1; Cols S1 S0: 00, 01, 11, 10)
+      const kCols8 = [0, 1, 3, 2];
+      document.getElementById("kmap-mux81").innerHTML = `
+        <div class="kmap-toolbar">
+          <span class="kmap-title">Map-Entered-Variable K-Map (S2, S1, S0)</span>
+          <span style="font-size:0.75rem; color:var(--text-muted);">Cell content = Routed data input Di</span>
+        </div>
+        <div class="kmap-grid-wrap">
+          <table class="kmap-grid">
+            <tr><th>S2 \ S1 S0</th><th>00</th><th>01</th><th>11</th><th>10</th></tr>
+            ${[0, 1].map(rowS2 => `
+              <tr>
+                <th>${rowS2}</th>
+                ${kCols8.map(colS1S0 => {
+                  const cellIdx = (rowS2 << 2) | colS1S0;
+                  const isCur = cellIdx === sel;
+                  return `<td class="kmap-cell ${isCur ? 'active-cell' : ''}">D${cellIdx} (${d[cellIdx]})</td>`;
+                }).join("")}
+              </tr>
+            `).join("")}
+          </table>
+        </div>
+        <div style="font-size:0.8rem; margin-top:4px;">
+          <strong>Groups &amp; Expression:</strong> Top Row = <span class="kmap-group-tag group-orange">S2'·(MUX0)</span>, Bottom Row = <span class="kmap-group-tag group-blue">S2·(MUX1)</span>. Final: Y = S2'·MUX0 + S2·MUX1.
+        </div>
+      `;
+
+      state.loops.mux81 = [{ rows: [0], cols: [0, 1, 2, 3], color: 0 }, { rows: [1], cols: [0, 1, 2, 3], color: 1 }];
+      renderGateDiagram("mux81");
+      updateChallengeUI("mux81");
+    }
+
+    /* ==========================================================================
+       6. EVENT HANDLERS & NAVIGATION
+       ========================================================================== */
+    function toggleSw(circuitKey, group, index) {
+      const sw = state.switches[circuitKey];
+      if (index !== undefined) {
+        sw[group][index] = sw[group][index] ? 0 : 1;
+      } else {
+        sw[group] = sw[group] ? 0 : 1;
+      }
+      renderCurrentCircuit();
+    }
+
+    function renderCurrentCircuit() {
+      const ck = state.activeTab;
+      if (ck === "mux41") renderMux41();
+      else if (ck === "demux14") renderDemux14();
+      else if (ck === "decoder38") renderDecoder38();
+      else if (ck === "encoder83") renderEncoder83();
+      else if (ck === "mux81") renderMux81();
+    }
+
+    function switchTab(circuitKey) {
+      state.activeTab = circuitKey;
+      document.querySelectorAll(".tab-btn").forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.circuit === circuitKey);
+      });
+      document.querySelectorAll(".circuit-panel").forEach(panel => {
+        panel.classList.toggle("active", panel.id === `panel-${circuitKey}`);
+      });
+      renderCurrentCircuit();
+    }
+
+    window.addEventListener("DOMContentLoaded", () => {
+      buildAppDOM();
+
+      document.querySelectorAll(".tab-btn").forEach(btn => {
+        btn.addEventListener("click", () => switchTab(btn.dataset.circuit));
+      });
+
+      // Generate initial challenge for every tab
+      CIRCUIT_KEYS.forEach(ck => newChallenge(ck, false));
+
+      // Initial render
+      renderMux41();
+      renderDemux14();
+      renderDecoder38();
+      renderEncoder83();
+      renderMux81();
+    });
+  </script>
+</body>
+</html>
